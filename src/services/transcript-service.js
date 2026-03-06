@@ -12,11 +12,16 @@ const cleanupSchema = {
 
 const hardReplacements = [
   { pattern: /\bjust your medication\b/gi, replacement: "adjust your medication" },
+  { pattern: /\bi just still talking you are blood pressure medication\b/gi, replacement: "are you still taking your blood pressure medication" },
   { pattern: /\bare you still talking your blood pressure medication\b/gi, replacement: "are you still taking your blood pressure medication" },
-  { pattern: /\bmore tried than\b/gi, replacement: "more tired than" },
-  { pattern: /\bhow you have been feelings is your last visit\b/gi, replacement: "how have you been feeling since your last visit" },
-  { pattern: /\bno blood pressure has still been around on 15\b/gi, replacement: "my blood pressure has still been around 150" },
   { pattern: /\btalking your medication\b/gi, replacement: "taking your medication" },
+  { pattern: /\bmore tried than\b/gi, replacement: "more tired than" },
+  { pattern: /\bmore tried then you will\b/gi, replacement: "more tired than usual" },
+  { pattern: /\bhow you have been feelings is your last visit\b/gi, replacement: "how have you been feeling since your last visit" },
+  { pattern: /\bcall also recommend blood test\b/gi, replacement: "I will also recommend blood tests" },
+  { pattern: /\bi will also recommend blood test\b/gi, replacement: "I will also recommend blood tests" },
+  { pattern: /\byes but pressure has still been 150\b/gi, replacement: "yes, but blood pressure has still been around 150" },
+  { pattern: /\bno blood pressure has still been around on 15\b/gi, replacement: "my blood pressure has still been around 150" },
   { pattern: /\bfeelings\b/gi, replacement: "feeling" },
   { pattern: /\bon 15\b/gi, replacement: "around 150" },
   { pattern: /\s+/g, replacement: " " },
@@ -41,8 +46,8 @@ const sanitizeDeterministic = (rawText) => {
     };
   }
 
-  const normalized = text.charAt(0).toUpperCase() + text.slice(1);
-  const confidence = replacements > 0 ? 0.76 : 0.92;
+  const normalized = text.charAt(0).toUpperCase() + text.slice(1).replace(/\s+/g, " ").trim();
+  const confidence = replacements > 0 ? 0.78 : 0.92;
 
   return {
     cleanedText: normalized,

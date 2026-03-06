@@ -4,6 +4,7 @@ HIPAA-first medical AI assistant prototype for live doctor-patient encounters:
 
 - Live speech-to-text transcription (Azure Speech token flow + browser fallback)
 - Transcript cleanup for noisy ASR lines before analysis
+- E/M guardrail: baseline code is not double-counted in compliant opportunity revenue
 - Transcript analysis with OpenAI text models (no WebRTC realtime dependency)
 - Compliant CPT/HCPCS opportunity suggestions
 - Revenue projection with insurance multiplier + Medicare fallback

@@ -99,7 +99,9 @@ router.post(
       return;
     }
 
+    const baselineCode = "99213";
     const source = request.body.source || "unknown";
+
     const processedSegment = await normalizeTranscriptSegment({ rawText: rawSegment, source });
     if (!processedSegment.cleanedText) {
       response.status(400).json({ error: "Transcript segment could not be processed." });
@@ -116,7 +118,12 @@ router.post(
 
     const transcriptContext = getTranscriptContext(appointment.id, 8);
     const existingCodes = new Set(appointment.suggestions.map((item) => item.code));
-    const ruleSuggestions = inferRuleBasedSuggestions({ segment: transcriptContext, existingCodes });
+
+    const ruleSuggestions = inferRuleBasedSuggestions({
+      segment: transcriptContext,
+      existingCodes,
+    }).filter((item) => item.code !== baselineCode);
+
     const mergedRule = addSuggestions(appointment.id, ruleSuggestions, "rule-engine");
 
     let aiModel = null;
@@ -128,17 +135,21 @@ router.post(
         insurancePlan: appointment.insurancePlan,
         visitType: appointment.visitType,
         transcriptContext,
+        baselineCode,
         existingCodes: appointment.suggestions.map((item) => item.code),
       });
 
       aiModel = aiResult.model;
-      const normalizedAi = normalizeAiSuggestions(aiResult.suggestions);
+      const normalizedAi = normalizeAiSuggestions(aiResult.suggestions)
+        .filter((item) => item.code !== baselineCode)
+        .filter((item) => Number(item.confidence || 0) >= 0.62);
+
       mergedAi = addSuggestions(appointment.id, normalizedAi, "openai-analysis") || { newlyAdded: [] };
     }
 
     const tracker = estimateRevenueTracker({
       insurancePlan: appointment.insurancePlan,
-      baselineCode: "99213",
+      baselineCode,
       suggestions: appointment.suggestions,
     });
     setRevenueTracker(appointment.id, tracker);

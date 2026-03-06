@@ -8,6 +8,7 @@ Rules:
 - Never upcode.
 - Never suggest medically unnecessary services.
 - Only suggest codes supported by explicit transcript evidence.
+- Do not suggest baseline E/M code if it is already assumed for the visit.
 - If evidence is weak, do not suggest the code.
 - Keep rationale short and concrete.
 - Return JSON that matches schema.
@@ -73,6 +74,7 @@ export const analyzeTranscriptForSuggestions = async ({
   insurancePlan,
   visitType,
   transcriptContext,
+  baselineCode = "99213",
   existingCodes = [],
 }) => {
   if (!env.openAiApiKey) {
@@ -111,6 +113,7 @@ export const analyzeTranscriptForSuggestions = async ({
                 `Appointment ID: ${appointmentId}`,
                 `Insurance Plan: ${insurancePlan}`,
                 `Visit Type: ${visitType}`,
+                `Baseline E/M code already assumed: ${baselineCode}`,
                 `Existing codes already selected: ${existingCodes.join(", ") || "none"}`,
                 "Transcript context (most recent first):",
                 transcriptContext,
