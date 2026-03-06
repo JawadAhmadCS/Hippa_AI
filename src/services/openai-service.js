@@ -1,64 +1,137 @@
 import { env } from "../config/env.js";
 
-const realtimeSystemInstructions = `
-You are a clinical coding validation engine.
-
-Your role is strictly to detect supported CPT/HCPCS codes from transcript evidence.
-You are NOT a conversational assistant.
+const analysisSystemInstructions = `
+You are a medical coding support assistant.
+Your task is to produce compliance-safe, evidence-based coding opportunities from transcript text.
 
 Rules:
-- Never speak conversationally.
-- Never provide explanations outside the JSON.
-- Never suggest upcoding or speculative billing.
-- Only suggest codes when explicit transcript evidence exists.
-- If evidence is insufficient, return an empty suggestions array.
-- Do not ask questions.
-- Do not provide recommendations.
-- Maximum 2 suggestions.
-- Keep rationale under 12 words.
-- Confidence must be between 0.0 and 1.0.
-- Output must be valid JSON only.
+- Never upcode.
+- Never suggest medically unnecessary services.
+- Only suggest codes supported by explicit transcript evidence.
+- If evidence is weak, do not suggest the code.
+- Keep rationale short and concrete.
+- Return JSON that matches schema.
+`.trim();
 
-Return EXACTLY this structure:
+const outputSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    suggestions: {
+      type: "array",
+      maxItems: 3,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          code: { type: "string" },
+          rationale: { type: "string" },
+          documentationNeeded: { type: "string" },
+          confidence: { type: "number", minimum: 0, maximum: 1 },
+          evidence: { type: "string" },
+        },
+        required: ["code", "rationale", "documentationNeeded", "confidence", "evidence"],
+      },
+    },
+  },
+  required: ["suggestions"],
+};
 
-{
-  "suggestions": [
-    {
-      "code": "XXXX",
-      "rationale": "evidence from transcript",
-      "documentationNeeded": "missing documentation if required",
-      "confidence": 0.0
+const parseStructuredOutput = (result) => {
+  const candidate = result?.output_text;
+  if (candidate && typeof candidate === "string") {
+    try {
+      const parsed = JSON.parse(candidate);
+      return Array.isArray(parsed?.suggestions) ? parsed.suggestions : [];
+    } catch {
+      return [];
     }
-  ]
-}
-`.
-  trim()
-  .replace(/\n\s+/g, "\n");
-
-export const createRealtimeSession = async ({ appointmentId, insurancePlan }) => {
-  if (!env.openAiApiKey) {
-    throw new Error("OPENAI_API_KEY is not configured.");
   }
 
-  const response = await fetch("https://api.openai.com/v1/realtime/sessions", {
+  const chunks = result?.output ?? [];
+  const text = chunks
+    .flatMap((item) => item?.content || [])
+    .map((content) => content?.text || "")
+    .join(" ")
+    .trim();
+
+  if (!text) return [];
+  const first = text.indexOf("{");
+  const last = text.lastIndexOf("}");
+  if (first === -1 || last === -1 || last <= first) return [];
+
+  try {
+    const parsed = JSON.parse(text.slice(first, last + 1));
+    return Array.isArray(parsed?.suggestions) ? parsed.suggestions : [];
+  } catch {
+    return [];
+  }
+};
+
+export const analyzeTranscriptForSuggestions = async ({
+  appointmentId,
+  insurancePlan,
+  visitType,
+  segment,
+  existingCodes = [],
+}) => {
+  if (!env.openAiApiKey) {
+    return { model: null, suggestions: [] };
+  }
+
+  const response = await fetch("https://api.openai.com/v1/responses", {
     method: "POST",
     headers: {
       Authorization: `Bearer ${env.openAiApiKey}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      model: env.openAiRealtimeModel,
-      voice: env.openAiRealtimeVoice,
-      modalities: ["text", "audio"],
-      instructions: `${realtimeSystemInstructions}\nAppointment ID: ${appointmentId}\nInsurance plan: ${insurancePlan}.`,
+      model: env.openAiAnalysisModel,
+      temperature: 0.1,
+      max_output_tokens: 500,
+      text: {
+        format: {
+          type: "json_schema",
+          name: "coding_suggestions",
+          schema: outputSchema,
+          strict: true,
+        },
+      },
+      input: [
+        {
+          role: "system",
+          content: [{ type: "input_text", text: analysisSystemInstructions }],
+        },
+        {
+          role: "user",
+          content: [
+            {
+              type: "input_text",
+              text: [
+                `Appointment ID: ${appointmentId}`,
+                `Insurance Plan: ${insurancePlan}`,
+                `Visit Type: ${visitType}`,
+                `Existing codes already selected: ${existingCodes.join(", ") || "none"}`,
+                "Transcript segment:",
+                segment,
+              ].join("\n"),
+            },
+          ],
+        },
+      ],
     }),
   });
 
   if (!response.ok) {
     const body = await response.text();
-    throw new Error(`OpenAI realtime session failed (${response.status}): ${body}`);
+    throw new Error(`OpenAI analysis failed (${response.status}): ${body}`);
   }
 
-  return response.json();
-};
+  const result = await response.json();
+  const suggestions = parseStructuredOutput(result);
 
+  return {
+    model: result?.model || env.openAiAnalysisModel,
+    suggestions,
+  };
+};

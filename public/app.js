@@ -5,9 +5,6 @@ const state = {
   micStream: null,
   speechRecognizer: null,
   browserRecognizer: null,
-  peerConnection: null,
-  dataChannel: null,
-  realtimeBuffer: "",
 };
 
 const ui = {
@@ -27,52 +24,60 @@ const ui = {
   compliancePanel: document.getElementById("compliancePanel"),
   eventLog: document.getElementById("eventLog"),
   sessionBadge: document.getElementById("sessionBadge"),
-  assistantAudio: document.getElementById("assistantAudio"),
+  waveform: document.getElementById("waveform"),
 };
 
 const safeNumber = (value) => Number(value || 0).toFixed(2);
 
-const addLog = (line) => {
+const addLog = (line, level = "info") => {
   const at = new Date().toLocaleTimeString();
   const node = document.createElement("div");
-  node.textContent = `[${at}] ${line}`;
+  node.className = `log-entry ${level}`;
+  node.innerHTML = `<span class="ts">${at}</span>${line}`;
   ui.eventLog.prepend(node);
 };
 
-const addEntry = (container, tag, text) => {
-  const wrapper = document.createElement("div");
-  wrapper.className = "entry";
-  const title = document.createElement("div");
-  title.className = "tag";
-  title.textContent = tag;
-  const body = document.createElement("div");
-  body.textContent = text;
-  wrapper.appendChild(title);
-  wrapper.appendChild(body);
-  container.prepend(wrapper);
+const clearEmpty = (container) => {
+  const empty = container.querySelector(".empty");
+  if (empty) empty.remove();
+};
+
+const addTranscriptLine = (source, text) => {
+  clearEmpty(ui.transcriptFeed);
+  const line = document.createElement("div");
+  line.className = "tx-line provider";
+  line.innerHTML = `<div class="speaker">${source}</div>${text}`;
+  ui.transcriptFeed.prepend(line);
+};
+
+const addAssistantMessage = (text) => {
+  clearEmpty(ui.chatFeed);
+  const message = document.createElement("div");
+  message.className = "chat-msg assistant";
+  message.textContent = text;
+  ui.chatFeed.prepend(message);
 };
 
 const renderSuggestions = (suggestions) => {
   ui.suggestionList.innerHTML = "";
   if (!suggestions.length) {
-    ui.suggestionList.textContent = "No compliant suggestions yet.";
+    ui.suggestionList.innerHTML = '<div class="empty">No compliant suggestions yet.</div>';
     return;
   }
 
   for (const item of suggestions) {
     const card = document.createElement("div");
-    card.className = "suggestion-card";
+    card.className = "cpt-card";
+    const confidence = Math.max(0, Math.min(100, Math.round((item.confidence || 0) * 100)));
     card.innerHTML = `
-      <div class="head">
-        <div>
-          <div class="code">${item.code}</div>
-          <strong>${item.title || "CPT/HCPCS suggestion"}</strong>
-        </div>
-        <div class="confidence">${Math.round((item.confidence || 0) * 100)}% confidence</div>
+      <div class="cpt-top">
+        <div class="cpt-code">${item.code}</div>
+        <div class="cpt-amount">${confidence}%</div>
       </div>
-      <p>${item.rationale || "No rationale."}</p>
-      <p><b>Documentation:</b> ${item.documentationNeeded || "Document medical necessity."}</p>
-      <p><b>Compliance:</b> ${item.complianceNotes || "Coder review required."}</p>
+      <div class="cpt-desc"><strong>${item.title || "CPT/HCPCS suggestion"}</strong></div>
+      <div class="cpt-desc">${item.rationale || "No rationale."}</div>
+      <div class="cpt-desc">Doc: ${item.documentationNeeded || "Document medical necessity."}</div>
+      <div class="cpt-confidence"><div class="cpt-confidence-fill" style="width:${confidence}%"></div></div>
     `;
     ui.suggestionList.appendChild(card);
   }
@@ -100,175 +105,46 @@ const api = async (path, options = {}) => {
   return data;
 };
 
+const renderComplianceItem = (label, ok) => {
+  const row = document.createElement("div");
+  row.className = `compliance-item ${ok ? "ok" : "warn"}`;
+  row.innerHTML = `<span class="dot"></span><span>${label}: ${ok ? "Configured" : "Missing"}</span>`;
+  return row;
+};
+
 const refreshComplianceStatus = async () => {
   const status = await api("/api/compliance/status");
-  const age = status.codebook?.ageDays ?? "unknown";
-  const stale = status.codebook?.stale ? "Yes" : "No";
-  ui.compliancePanel.innerHTML = `
-    <p><b>Codebook Version:</b> ${status.codebook?.version || "n/a"}</p>
-    <p><b>Codebook Age:</b> ${age} days</p>
-    <p><b>Codebook Stale:</b> ${stale}</p>
-    <p><b>OpenAI Realtime:</b> ${status.integrations?.openAiRealtimeConfigured ? "Configured" : "Not configured"}</p>
-    <p><b>Azure Speech:</b> ${status.integrations?.azureSpeechConfigured ? "Configured" : "Not configured"}</p>
-    <p><b>Azure Blob:</b> ${status.integrations?.azureBlobConfigured ? "Configured" : "Not configured"}</p>
-  `;
+  ui.compliancePanel.innerHTML = "";
+  ui.compliancePanel.appendChild(
+    renderComplianceItem("OpenAI Analysis", status.integrations?.openAiAnalysisConfigured)
+  );
+  ui.compliancePanel.appendChild(
+    renderComplianceItem("Azure Speech", status.integrations?.azureSpeechConfigured)
+  );
+  ui.compliancePanel.appendChild(
+    renderComplianceItem("Azure Blob", status.integrations?.azureBlobConfigured)
+  );
+
+  const codebook = document.createElement("div");
+  codebook.className = `compliance-item ${status.codebook?.stale ? "warn" : "ok"}`;
+  codebook.innerHTML = `<span class="dot"></span><span>Codebook Age: ${status.codebook?.ageDays ?? "?"} days</span>`;
+  ui.compliancePanel.appendChild(codebook);
 };
 
-const parseJsonSuggestions = (text) => {
-  if (!text || typeof text !== "string") return [];
-  const first = text.indexOf("{");
-  const last = text.lastIndexOf("}");
-  if (first === -1 || last === -1 || last <= first) return [];
-  try {
-    const parsed = JSON.parse(text.slice(first, last + 1));
-    return Array.isArray(parsed.suggestions) ? parsed.suggestions : [];
-  } catch {
-    return [];
-  }
-};
-
-const sendRealtimeEvent = (event) => {
-  if (state.dataChannel && state.dataChannel.readyState === "open") {
-    state.dataChannel.send(JSON.stringify(event));
-  }
-};
-
-const submitRealtimeSuggestions = async (suggestions) => {
-  if (!state.appointment || !suggestions.length) return;
-  const data = await api(`/api/appointments/${state.appointment.id}/realtime-suggestions`, {
-    method: "POST",
-    body: JSON.stringify({ suggestions }),
-  });
-  renderSuggestions(data.allSuggestions || []);
-  renderRevenueTracker(data.revenueTracker || {});
-};
-
-const handleRealtimeMessage = async (payload) => {
-  let event;
-  try {
-    event = JSON.parse(payload);
-  } catch {
-    return;
+const summarizeNewSuggestions = (suggestions, model) => {
+  if (!suggestions.length) {
+    return model
+      ? `AI analysis (${model}): abhi transcript evidence se naya code recommend nahi hua.`
+      : "Rule engine: abhi transcript evidence se naya code recommend nahi hua.";
   }
 
-  if (typeof event.delta === "string" && event.type?.includes("delta")) {
-    state.realtimeBuffer += event.delta;
-  }
+  const lines = suggestions
+    .slice(0, 3)
+    .map((s) => `${s.code}: ${s.rationale || "supported by transcript"}`)
+    .join(" | ");
 
-  if (event.type === "response.output_text.done" || event.type === "response.done") {
-    let text = "";
-    if (typeof event.text === "string") text = event.text;
-    if (!text && state.realtimeBuffer) text = state.realtimeBuffer;
-    if (!text && event.response?.output_text) text = event.response.output_text;
-    if (!text && Array.isArray(event.response?.output)) {
-      text = event.response.output
-        .map((item) => item?.content?.map((c) => c?.text || "").join(" "))
-        .join(" ");
-    }
-    if (text) {
-      addEntry(ui.chatFeed, "assistant", text);
-      const suggestions = parseJsonSuggestions(text);
-      if (suggestions.length) {
-        await submitRealtimeSuggestions(suggestions);
-      }
-    }
-    state.realtimeBuffer = "";
-  }
-};
-
-const connectRealtimeAssistant = async () => {
-  if (!state.appointment) return;
-
-  try {
-    const session = await api("/api/realtime/session", {
-      method: "POST",
-      body: JSON.stringify({
-        appointmentId: state.appointment.id,
-        insurancePlan: state.appointment.insurancePlan,
-      }),
-    });
-
-    if (!session.clientSecret) {
-      addLog("OpenAI Realtime not configured on server.");
-      return;
-    }
-
-    const peer = new RTCPeerConnection();
-    state.peerConnection = peer;
-    const dataChannel = peer.createDataChannel("oai-events");
-    state.dataChannel = dataChannel;
-
-    if (state.micStream) {
-      for (const track of state.micStream.getTracks()) {
-        peer.addTrack(track, state.micStream);
-      }
-    } else {
-      peer.addTransceiver("audio", { direction: "recvonly" });
-    }
-
-    peer.ontrack = (event) => {
-      ui.assistantAudio.srcObject = event.streams[0];
-    };
-
-    dataChannel.onopen = () => {
-      addLog("Realtime data channel connected.");
-      sendRealtimeEvent({
-        type: "session.update",
-        session: {
-          instructions:
-            "You are a compliant medical coding copilot. Never upcode. Return JSON with top 3 evidence-based suggestions only.",
-        },
-      });
-    };
-    dataChannel.onmessage = (event) => {
-      handleRealtimeMessage(event.data).catch((error) => addLog(`Realtime parse error: ${error.message}`));
-    };
-
-    const offer = await peer.createOffer();
-    await peer.setLocalDescription(offer);
-
-    const response = await fetch(
-      `https://api.openai.com/v1/realtime?model=${encodeURIComponent(session.model)}`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${session.clientSecret}`,
-          "Content-Type": "application/sdp",
-        },
-        body: offer.sdp,
-      }
-    );
-
-    if (!response.ok) {
-      const body = await response.text();
-      throw new Error(`Realtime SDP failed (${response.status}): ${body}`);
-    }
-
-    const answer = await response.text();
-    await peer.setRemoteDescription({ type: "answer", sdp: answer });
-    addLog(`Realtime session active (${session.model}).`);
-  } catch (error) {
-    addLog(`Realtime disabled: ${error.message}`);
-  }
-};
-
-const pushTranscriptToAssistant = (text) => {
-  sendRealtimeEvent({
-    type: "conversation.item.create",
-    item: {
-      type: "message",
-      role: "user",
-      content: [{ type: "input_text", text: `Transcript evidence: ${text}` }],
-    },
-  });
-  sendRealtimeEvent({
-    type: "response.create",
-    response: {
-      modalities: ["text"],
-      instructions:
-        "Return JSON only. Suggest compliant CPT/HCPCS opportunities backed by transcript evidence. If uncertain, return empty list.",
-    },
-  });
+  const prefix = model ? `AI analysis (${model})` : "Rule engine";
+  return `${prefix}: ${lines}`;
 };
 
 const submitTranscriptSegment = async (text, source) => {
@@ -277,14 +153,19 @@ const submitTranscriptSegment = async (text, source) => {
     method: "POST",
     body: JSON.stringify({ segment: text, source }),
   });
+
   renderSuggestions(payload.allSuggestions || []);
   renderRevenueTracker(payload.revenueTracker || {});
+  addAssistantMessage(summarizeNewSuggestions(payload.newlyAddedSuggestions || [], payload.analysis?.model));
+
+  if (payload.analysis?.mode === "rule-engine+openai") {
+    addLog(`Analyzed by ${payload.analysis.model || "OpenAI"}`, "good");
+  }
 };
 
 const handleTranscriptSegment = async (text, source) => {
-  addEntry(ui.transcriptFeed, source, text);
+  addTranscriptLine(source, text);
   await submitTranscriptSegment(text, source);
-  pushTranscriptToAssistant(text);
 };
 
 const startAzureSpeech = async () => {
@@ -293,7 +174,7 @@ const startAzureSpeech = async () => {
   try {
     const tokenData = await api("/api/azure/speech-token");
     if (!tokenData.configured || !tokenData.token || !tokenData.region) {
-      addLog("Azure Speech not configured. Falling back to browser speech recognition.");
+      addLog("Azure Speech not configured, browser fallback use hoga.", "warn");
       return false;
     }
 
@@ -310,22 +191,22 @@ const startAzureSpeech = async () => {
         const text = event.result.text?.trim();
         if (text) {
           handleTranscriptSegment(text, "azure-live").catch((error) =>
-            addLog(`Transcript submission failed: ${error.message}`)
+            addLog(`Transcript submission failed: ${error.message}`, "warn")
           );
         }
       }
     };
 
     recognizer.canceled = (_sender, event) => {
-      addLog(`Azure recognizer canceled: ${event.errorDetails || event.reason}`);
+      addLog(`Azure recognizer canceled: ${event.errorDetails || event.reason}`, "warn");
     };
 
     recognizer.startContinuousRecognitionAsync();
     state.speechRecognizer = recognizer;
-    addLog("Azure speech recognition started.");
+    addLog("Azure speech recognition started.", "good");
     return true;
   } catch (error) {
-    addLog(`Azure speech failed: ${error.message}`);
+    addLog(`Azure speech failed: ${error.message}`, "warn");
     return false;
   }
 };
@@ -333,7 +214,7 @@ const startAzureSpeech = async () => {
 const startBrowserSpeechFallback = () => {
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SpeechRecognition) {
-    addLog("No speech recognition available in this browser.");
+    addLog("No speech recognition available in this browser.", "warn");
     return false;
   }
 
@@ -349,16 +230,17 @@ const startBrowserSpeechFallback = () => {
         const text = result[0]?.transcript?.trim();
         if (text) {
           handleTranscriptSegment(text, "browser-fallback").catch((error) =>
-            addLog(`Fallback transcript failed: ${error.message}`)
+            addLog(`Fallback transcript failed: ${error.message}`, "warn")
           );
         }
       }
     }
   };
-  recognizer.onerror = (event) => addLog(`Speech fallback error: ${event.error}`);
+
+  recognizer.onerror = (event) => addLog(`Speech fallback error: ${event.error}`, "warn");
   recognizer.start();
   state.browserRecognizer = recognizer;
-  addLog("Browser speech fallback started.");
+  addLog("Browser speech fallback started.", "good");
   return true;
 };
 
@@ -366,22 +248,27 @@ const startRecording = () => {
   if (!state.micStream) return;
   state.recordingChunks = [];
   const recorder = new MediaRecorder(state.micStream, { mimeType: "audio/webm" });
+
   recorder.ondataavailable = (event) => {
     if (event.data && event.data.size > 0) {
       state.recordingChunks.push(event.data);
     }
   };
+
   recorder.start(1000);
   state.mediaRecorder = recorder;
-  addLog("Encounter recording started.");
+  ui.waveform?.classList.add("active");
+  addLog("Encounter recording started.", "good");
 };
 
 const stopRecordingAndUpload = async () => {
   if (!state.mediaRecorder || !state.appointment) return;
+
   await new Promise((resolve) => {
     state.mediaRecorder.onstop = resolve;
     state.mediaRecorder.stop();
   });
+
   const blob = new Blob(state.recordingChunks, { type: "audio/webm" });
   if (!blob.size) return;
 
@@ -398,7 +285,7 @@ const stopRecordingAndUpload = async () => {
   }
 
   const uploaded = await response.json();
-  addLog(`Recording uploaded to ${uploaded.recording.provider}.`);
+  addLog(`Recording uploaded to ${uploaded.recording.provider}.`, "good");
 };
 
 const startEncounter = async () => {
@@ -420,17 +307,17 @@ const startEncounter = async () => {
       consentGiven: true,
     }),
   });
+
   state.appointment = created.appointment;
-  addLog(`Appointment created: ${state.appointment.id}`);
+  addLog(`Appointment created: ${state.appointment.id}`, "good");
   ui.sessionBadge.textContent = `Live: ${state.appointment.id}`;
+  ui.sessionBadge.classList.add("active");
 
   state.micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
   startRecording();
+
   const azureStarted = await startAzureSpeech();
-  if (!azureStarted) {
-    startBrowserSpeechFallback();
-  }
-  await connectRealtimeAssistant();
+  if (!azureStarted) startBrowserSpeechFallback();
 
   ui.startBtn.disabled = true;
   ui.stopBtn.disabled = false;
@@ -442,7 +329,7 @@ const stopEncounter = async () => {
   if (state.speechRecognizer) {
     state.speechRecognizer.stopContinuousRecognitionAsync(
       () => addLog("Azure speech stopped."),
-      (error) => addLog(`Error stopping Azure speech: ${error}`)
+      (error) => addLog(`Error stopping Azure speech: ${error}`, "warn")
     );
     state.speechRecognizer = null;
   }
@@ -453,38 +340,30 @@ const stopEncounter = async () => {
     addLog("Browser fallback speech stopped.");
   }
 
-  if (state.dataChannel) {
-    state.dataChannel.close();
-    state.dataChannel = null;
-  }
-
-  if (state.peerConnection) {
-    state.peerConnection.close();
-    state.peerConnection = null;
-  }
-
   if (state.micStream) {
     state.micStream.getTracks().forEach((track) => track.stop());
   }
 
+  ui.waveform?.classList.remove("active");
+
   try {
     await stopRecordingAndUpload();
   } catch (error) {
-    addLog(error.message);
+    addLog(error.message, "warn");
   }
 
   ui.sessionBadge.textContent = "Session Idle";
+  ui.sessionBadge.classList.remove("active");
   ui.startBtn.disabled = false;
   addLog("Encounter ended.");
 };
 
 ui.startBtn.addEventListener("click", () => {
-  startEncounter().catch((error) => addLog(`Start failed: ${error.message}`));
+  startEncounter().catch((error) => addLog(`Start failed: ${error.message}`, "warn"));
 });
 
 ui.stopBtn.addEventListener("click", () => {
-  stopEncounter().catch((error) => addLog(`Stop failed: ${error.message}`));
+  stopEncounter().catch((error) => addLog(`Stop failed: ${error.message}`, "warn"));
 });
 
-refreshComplianceStatus().catch((error) => addLog(`Compliance status error: ${error.message}`));
-
+refreshComplianceStatus().catch((error) => addLog(`Compliance status error: ${error.message}`, "warn"));

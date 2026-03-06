@@ -12,7 +12,7 @@ import {
 import { writeAuditEvent } from "../services/audit-service.js";
 import { getCodebookStatus, searchCodes } from "../services/codebook-service.js";
 import { estimateRevenueTracker } from "../services/revenue-service.js";
-import { createRealtimeSession } from "../services/openai-service.js";
+import { analyzeTranscriptForSuggestions } from "../services/openai-service.js";
 import { getAzureSpeechToken, uploadAppointmentAudio } from "../services/azure-service.js";
 import { inferRuleBasedSuggestions, normalizeRealtimeSuggestions } from "../services/suggestion-service.js";
 
@@ -72,35 +72,6 @@ router.get(
   })
 );
 
-router.post(
-  "/realtime/session",
-  withAsync(async (request, response) => {
-    if (!featureFlags.hasOpenAi) {
-      response.status(503).json({
-        error: "OpenAI key is not configured.",
-      });
-      return;
-    }
-
-    const appointmentId = request.body.appointmentId || "unknown-appointment";
-    const insurancePlan = request.body.insurancePlan || "medicare";
-
-    const session = await createRealtimeSession({ appointmentId, insurancePlan });
-    await writeAuditEvent("realtime.session.created", {
-      appointmentId,
-      insurancePlan,
-      sessionId: session?.id,
-    });
-
-    response.json({
-      sessionId: session.id,
-      model: session.model,
-      clientSecret: session?.client_secret?.value ?? null,
-      expiresAt: session?.expires_at ?? null,
-    });
-  })
-);
-
 router.get(
   "/azure/speech-token",
   withAsync(async (_request, response) => {
@@ -132,8 +103,25 @@ router.post(
     });
 
     const existingCodes = new Set(appointment.suggestions.map((item) => item.code));
-    const suggestions = inferRuleBasedSuggestions({ segment, existingCodes });
-    const merged = addSuggestions(appointment.id, suggestions, "rule-engine");
+    const ruleSuggestions = inferRuleBasedSuggestions({ segment, existingCodes });
+    const mergedRule = addSuggestions(appointment.id, ruleSuggestions, "rule-engine");
+
+    let aiModel = null;
+    let mergedAi = { newlyAdded: [] };
+
+    if (featureFlags.hasOpenAi) {
+      const aiResult = await analyzeTranscriptForSuggestions({
+        appointmentId: appointment.id,
+        insurancePlan: appointment.insurancePlan,
+        visitType: appointment.visitType,
+        segment,
+        existingCodes: appointment.suggestions.map((item) => item.code),
+      });
+
+      aiModel = aiResult.model;
+      const normalizedAi = normalizeRealtimeSuggestions(aiResult.suggestions);
+      mergedAi = addSuggestions(appointment.id, normalizedAi, "openai-analysis") || { newlyAdded: [] };
+    }
 
     const tracker = estimateRevenueTracker({
       insurancePlan: appointment.insurancePlan,
@@ -146,45 +134,23 @@ router.post(
       appointmentId: appointment.id,
       source: request.body.source || "unknown",
       segment,
-      generatedCodes: merged?.newlyAdded?.map((item) => item.code) ?? [],
+      ruleGeneratedCodes: mergedRule?.newlyAdded?.map((item) => item.code) ?? [],
+      aiGeneratedCodes: mergedAi?.newlyAdded?.map((item) => item.code) ?? [],
+      aiModel,
     });
 
     response.json({
       transcriptCount: appointment.transcriptSegments.length,
-      newlyAddedSuggestions: merged?.newlyAdded ?? [],
+      newlyAddedSuggestions: [
+        ...(mergedRule?.newlyAdded ?? []),
+        ...(mergedAi?.newlyAdded ?? []),
+      ],
       allSuggestions: appointment.suggestions,
       revenueTracker: appointment.revenueTracker,
-    });
-  })
-);
-
-router.post(
-  "/appointments/:appointmentId/realtime-suggestions",
-  withAsync(async (request, response) => {
-    const appointment = ensureAppointment(request.params.appointmentId, response);
-    if (!appointment) return;
-
-    const rawSuggestions = request.body.suggestions;
-    const normalized = normalizeRealtimeSuggestions(rawSuggestions);
-    const merged = addSuggestions(appointment.id, normalized, "openai-realtime");
-
-    const tracker = estimateRevenueTracker({
-      insurancePlan: appointment.insurancePlan,
-      baselineCode: "99213",
-      suggestions: appointment.suggestions,
-    });
-    setRevenueTracker(appointment.id, tracker);
-
-    await writeAuditEvent("appointment.realtime.suggestions", {
-      appointmentId: appointment.id,
-      acceptedCodes: merged?.newlyAdded?.map((item) => item.code) ?? [],
-      countReceived: Array.isArray(rawSuggestions) ? rawSuggestions.length : 0,
-    });
-
-    response.json({
-      newlyAddedSuggestions: merged?.newlyAdded ?? [],
-      allSuggestions: appointment.suggestions,
-      revenueTracker: appointment.revenueTracker,
+      analysis: {
+        model: aiModel,
+        mode: featureFlags.hasOpenAi ? "rule-engine+openai" : "rule-engine-only",
+      },
     });
   })
 );
@@ -233,7 +199,7 @@ router.get(
     response.json({
       codebook: getCodebookStatus(),
       integrations: {
-        openAiRealtimeConfigured: featureFlags.hasOpenAi,
+        openAiAnalysisConfigured: featureFlags.hasOpenAi,
         azureSpeechConfigured: featureFlags.hasAzureSpeech,
         azureBlobConfigured: featureFlags.hasAzureBlobStorage,
       },
@@ -247,4 +213,3 @@ router.get(
 );
 
 export default router;
-

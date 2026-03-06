@@ -1,23 +1,24 @@
 # Helix Revenue Copilot (Prototype)
 
-HIPAA-first medical AI assistant prototype that combines:
+HIPAA-first medical AI assistant prototype for live doctor-patient encounters:
 
-- Live transcript capture (Azure Speech token flow + browser fallback)
-- OpenAI Realtime assistant (`gpt-4o-realtime-preview`)
+- Live speech-to-text transcription (Azure Speech token flow + browser fallback)
+- Transcript analysis with OpenAI text models (no WebRTC realtime dependency)
 - Compliant CPT/HCPCS opportunity suggestions
 - Revenue projection with insurance multiplier + Medicare fallback
-- Audio recording capture and storage (Azure Blob + local fallback)
+- Audio recording storage (Azure Blob + local fallback)
 
 ## Important Scope
 
-This is a prototype for compliant workflow design. It is **not** legal advice and is **not** a finished billing product. Every suggestion must be reviewed by certified coders and billing staff.
+This is a prototype for compliant workflow design. It is not legal advice and not a finished billing product. Every coding suggestion must be reviewed by certified coders/billing staff.
 
-## Tech Stack
+## Current Model Strategy
 
-- Backend: Node.js + Express
-- Frontend: Vanilla JS + modern CSS (responsive)
-- AI: OpenAI Realtime session minting (`/v1/realtime/sessions`)
-- Speech/Storage: Azure Speech token + Azure Blob hooks
+- Live analysis model: `OPENAI_ANALYSIS_MODEL` (default `gpt-4.1-mini`)
+- Optional deeper review model: `OPENAI_FINAL_REVIEW_MODEL` (default `gpt-4.1`)
+- Transcription: Azure Speech (or browser fallback)
+
+Reason: for this workflow, low-latency text analysis over transcript chunks is enough; realtime WebRTC model is not required.
 
 ## Quick Start
 
@@ -27,19 +28,19 @@ This is a prototype for compliant workflow design. It is **not** legal advice an
 npm install
 ```
 
-2. Copy environment file and fill secrets:
+2. Copy env and add secrets:
 
 ```bash
 cp .env.example .env
 ```
 
-3. (Optional) Validate CPT codebook:
+3. Validate codebook:
 
 ```bash
 npm run check
 ```
 
-4. Start server:
+4. Start app:
 
 ```bash
 npm run dev
@@ -49,97 +50,74 @@ npm run dev
 
 `http://localhost:8787`
 
-## Run + Validation (Must Do)
-
-1. Validate codebook integrity:
+## Run + Validation
 
 ```bash
 npm run check
-```
-
-2. Start app:
-
-```bash
-npm run dev
-```
-
-3. Verify runtime health:
-
-```bash
 curl http://localhost:8787/api/health
 curl http://localhost:8787/api/compliance/status
 ```
 
 Expected:
 
-- `/api/health` returns `"ok": true`
-- `/api/compliance/status` returns integration flags and codebook freshness
-
-Validation run completed in this workspace on **March 7, 2026**:
-
-- `npm run check`: passed
-- source syntax checks (`node --check`): passed
-- `/api/health`: passed
-- `/api/compliance/status`: passed
+- `/api/health` => `ok: true`
+- `/api/compliance/status` => integration flags + codebook freshness
 
 ## Environment Variables
 
 See `.env.example`.
 
-Minimum for full prototype behavior:
+Required for full functionality:
 
 - `OPENAI_API_KEY`
 - `AZURE_SPEECH_KEY`
 - `AZURE_SPEECH_REGION`
 - `AZURE_STORAGE_CONNECTION_STRING`
 
-Also used by this prototype:
+Also used:
 
+- `OPENAI_ANALYSIS_MODEL` (default `gpt-4.1-mini`)
+- `OPENAI_FINAL_REVIEW_MODEL` (default `gpt-4.1`)
 - `PORT` (default `8787`)
-- `OPENAI_REALTIME_MODEL` (default `gpt-4o-realtime-preview`)
-- `OPENAI_REALTIME_VOICE` (default `alloy`)
 - `AZURE_STORAGE_CONTAINER` (default `appointment-audio`)
 - `COMPLIANCE_LOG_RETENTION_DAYS`
 - `CODEBOOK_STALE_DAYS`
 
-If keys are missing, app still runs in fallback mode:
+Fallback behavior:
 
-- Realtime session endpoint returns config error when `OPENAI_API_KEY` is empty
-- Azure speech falls back to browser speech recognition
-- Audio upload falls back to local `uploads/` storage
+- Missing OpenAI key => app still runs with rule-engine suggestions
+- Missing Azure speech keys => browser speech recognition fallback
+- Missing Azure storage => local `uploads/` fallback
 
 ## API Summary
 
 - `POST /api/appointments` create encounter
-- `POST /api/realtime/session` create OpenAI ephemeral realtime client secret
-- `GET /api/azure/speech-token` get Azure speech auth token
-- `POST /api/appointments/:id/transcript` ingest live transcript segment and run rule suggestions
-- `POST /api/appointments/:id/realtime-suggestions` normalize/accept realtime model output
+- `GET /api/appointments/:id` encounter status
+- `GET /api/azure/speech-token` Azure speech token for live transcription
+- `POST /api/appointments/:id/transcript` ingest transcript segment + analyze with rule engine and OpenAI model
 - `POST /api/appointments/:id/audio` upload encounter audio
-- `GET /api/compliance/status` integration and codebook freshness status
+- `GET /api/compliance/status` integration and codebook freshness
 - `GET /api/codes/search?q=` CPT lookup
 
 ## HIPAA Notes
 
 Implementation notes: [docs/HIPAA-IMPLEMENTATION.md](docs/HIPAA-IMPLEMENTATION.md)
 
-The current prototype includes:
+Current controls include:
 
-- Consent gate
-- PHI-minimized logging
+- Consent gate before transcription/recording
+- PHI-minimized audit payloads
 - Hash-chained audit events
-- Compliance-forward prompts
+- Compliance-safe coding prompt policy
 
-For production HIPAA readiness, complete BAAs, formal security controls, and legal/compliance review.
+Production HIPAA readiness still requires BAAs, security hardening, and legal/compliance review.
 
 ## Troubleshooting
 
 - `EADDRINUSE: 8787`
-  - Another process already uses port `8787`.
-  - Stop that process or change `PORT` in `.env`.
+  - Another process already uses port `8787`
+  - Stop that process or change `PORT` in `.env`
 - Azure transcription not starting
-  - Verify `AZURE_SPEECH_KEY` and `AZURE_SPEECH_REGION`.
-  - Browser fallback can still work if supported.
-- No realtime assistant responses
-  - Verify `OPENAI_API_KEY`.
-  - Ensure realtime model is `gpt-4o-realtime-preview` (or your approved replacement).
+  - Check `AZURE_SPEECH_KEY` + `AZURE_SPEECH_REGION`
+- No OpenAI analysis suggestions
+  - Check `OPENAI_API_KEY` and `OPENAI_ANALYSIS_MODEL`

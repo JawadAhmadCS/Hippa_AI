@@ -10,8 +10,8 @@ const asNumber = (value, fallback) => {
 export const env = {
   port: asNumber(process.env.PORT, 8787),
   openAiApiKey: process.env.OPENAI_API_KEY ?? "",
-  openAiRealtimeModel: process.env.OPENAI_REALTIME_MODEL ?? "gpt-4o-realtime-preview",
-  openAiRealtimeVoice: process.env.OPENAI_REALTIME_VOICE ?? "alloy",
+  openAiAnalysisModel: process.env.OPENAI_ANALYSIS_MODEL ?? "gpt-4.1-mini",
+  openAiFinalReviewModel: process.env.OPENAI_FINAL_REVIEW_MODEL ?? "gpt-4.1",
   azureSpeechKey: process.env.AZURE_SPEECH_KEY ?? "",
   azureSpeechRegion: process.env.AZURE_SPEECH_REGION ?? "",
   azureStorageConnectionString: process.env.AZURE_STORAGE_CONNECTION_STRING ?? "",
@@ -25,4 +25,3 @@ export const featureFlags = {
   hasAzureSpeech: Boolean(env.azureSpeechKey && env.azureSpeechRegion),
   hasAzureBlobStorage: Boolean(env.azureStorageConnectionString),
 };
-
