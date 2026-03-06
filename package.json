@@ -1,0 +1,19 @@
+{
+  "name": "hipaa-revenue-assistant-prototype",
+  "version": "0.1.0",
+  "description": "HIPAA-first medical assistant prototype with OpenAI Realtime and Azure integrations",
+  "type": "module",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "check": "node scripts/validate-codebook.js"
+  },
+  "dependencies": {
+    "@azure/storage-blob": "^12.24.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.5.0",
+    "express": "^4.21.2",
+    "helmet": "^8.1.0",
+    "multer": "^2.0.2"
+  }
+}

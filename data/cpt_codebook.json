@@ -1,0 +1,87 @@
+{
+  "meta": {
+    "version": "2026.03-prototype",
+    "lastUpdated": "2026-02-20",
+    "source": "CMS Medicare Physician Fee Schedule + demo payer assumptions",
+    "disclaimer": "Prototype reference only. Always validate rates and coding policy with current payer contracts and certified coders."
+  },
+  "payerMultipliers": {
+    "medicare": 1.0,
+    "commercial": 1.34,
+    "medicaid": 0.81,
+    "self-pay": 0.58
+  },
+  "codes": [
+    {
+      "code": "99213",
+      "title": "Office/outpatient visit, established patient, low complexity",
+      "medicareRate": 96.11,
+      "documentationNeeded": "History, medically appropriate exam, low complexity MDM or qualifying time.",
+      "complianceNotes": "Do not level up solely for revenue; code must match documented complexity/time."
+    },
+    {
+      "code": "99214",
+      "title": "Office/outpatient visit, established patient, moderate complexity",
+      "medicareRate": 137.7,
+      "documentationNeeded": "Moderate MDM elements or qualifying total time documented.",
+      "complianceNotes": "Requires clear evidence of moderate complexity work."
+    },
+    {
+      "code": "99406",
+      "title": "Smoking and tobacco cessation counseling visit, intermediate",
+      "medicareRate": 18.84,
+      "documentationNeeded": "Tobacco use status, counseling duration, counseling content.",
+      "complianceNotes": "Counseling must be medically appropriate and time-based criteria met."
+    },
+    {
+      "code": "99497",
+      "title": "Advance care planning, first 30 minutes",
+      "medicareRate": 84.13,
+      "documentationNeeded": "Voluntary discussion details, participants, total time spent.",
+      "complianceNotes": "Use only when true ACP discussion occurs and time requirement is met."
+    },
+    {
+      "code": "99490",
+      "title": "Chronic care management services, 20 minutes",
+      "medicareRate": 61.99,
+      "documentationNeeded": "Two or more chronic conditions, consent, monthly time log, care plan.",
+      "complianceNotes": "Monthly CCM requirements must be satisfied."
+    },
+    {
+      "code": "G0439",
+      "title": "Annual wellness visit, subsequent",
+      "medicareRate": 126.59,
+      "documentationNeeded": "Required AWV components, personalized prevention plan, interval timing.",
+      "complianceNotes": "Frequency limits apply."
+    },
+    {
+      "code": "G0444",
+      "title": "Annual depression screening, 15 minutes",
+      "medicareRate": 19.46,
+      "documentationNeeded": "Validated screening instrument used and documented score/results.",
+      "complianceNotes": "Check coverage and frequency requirements."
+    },
+    {
+      "code": "93000",
+      "title": "Electrocardiogram with interpretation and report",
+      "medicareRate": 18.4,
+      "documentationNeeded": "Tracing performed, interpretation, and signed report.",
+      "complianceNotes": "Medical necessity and report are required."
+    },
+    {
+      "code": "90686",
+      "title": "Influenza vaccine, quadrivalent, preservative free",
+      "medicareRate": 21.18,
+      "documentationNeeded": "Vaccine lot, route, dose, counseling, consent.",
+      "complianceNotes": "Reimbursement often paired with administration code."
+    },
+    {
+      "code": "90471",
+      "title": "Immunization administration, first vaccine/toxoid",
+      "medicareRate": 30.16,
+      "documentationNeeded": "Administration details and counseling documentation per payer policy.",
+      "complianceNotes": "Pair with correct vaccine product code."
+    }
+  ]
+}
+
