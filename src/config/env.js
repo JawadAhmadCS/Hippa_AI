@@ -12,6 +12,7 @@ export const env = {
   openAiApiKey: process.env.OPENAI_API_KEY ?? "",
   openAiAnalysisModel: process.env.OPENAI_ANALYSIS_MODEL ?? "gpt-4.1-mini",
   openAiFinalReviewModel: process.env.OPENAI_FINAL_REVIEW_MODEL ?? "gpt-4.1",
+  openAiTranscriptCleanupModel: process.env.OPENAI_TRANSCRIPT_CLEANUP_MODEL ?? "gpt-4.1-mini",
   azureSpeechKey: process.env.AZURE_SPEECH_KEY ?? "",
   azureSpeechRegion: process.env.AZURE_SPEECH_REGION ?? "",
   azureStorageConnectionString: process.env.AZURE_STORAGE_CONNECTION_STRING ?? "",

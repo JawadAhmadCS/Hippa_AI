@@ -3,6 +3,7 @@
 HIPAA-first medical AI assistant prototype for live doctor-patient encounters:
 
 - Live speech-to-text transcription (Azure Speech token flow + browser fallback)
+- Transcript cleanup for noisy ASR lines before analysis
 - Transcript analysis with OpenAI text models (no WebRTC realtime dependency)
 - Compliant CPT/HCPCS opportunity suggestions
 - Revenue projection with insurance multiplier + Medicare fallback
@@ -15,8 +16,9 @@ This is a prototype for compliant workflow design. It is not legal advice and no
 ## Current Model Strategy
 
 - Live analysis model: `OPENAI_ANALYSIS_MODEL` (default `gpt-4.1-mini`)
+- Transcript cleanup model: `OPENAI_TRANSCRIPT_CLEANUP_MODEL` (default `gpt-4.1-mini`)
 - Optional deeper review model: `OPENAI_FINAL_REVIEW_MODEL` (default `gpt-4.1`)
-- Transcription: Azure Speech (or browser fallback)
+- Transcription: Azure Speech (recommended) or browser fallback
 
 Reason: for this workflow, low-latency text analysis over transcript chunks is enough; realtime WebRTC model is not required.
 
@@ -77,6 +79,7 @@ Required for full functionality:
 Also used:
 
 - `OPENAI_ANALYSIS_MODEL` (default `gpt-4.1-mini`)
+- `OPENAI_TRANSCRIPT_CLEANUP_MODEL` (default `gpt-4.1-mini`)
 - `OPENAI_FINAL_REVIEW_MODEL` (default `gpt-4.1`)
 - `PORT` (default `8787`)
 - `AZURE_STORAGE_CONTAINER` (default `appointment-audio`)
@@ -94,10 +97,16 @@ Fallback behavior:
 - `POST /api/appointments` create encounter
 - `GET /api/appointments/:id` encounter status
 - `GET /api/azure/speech-token` Azure speech token for live transcription
-- `POST /api/appointments/:id/transcript` ingest transcript segment + analyze with rule engine and OpenAI model
+- `POST /api/appointments/:id/transcript` ingest transcript segment + cleanup + analyze with rule engine and OpenAI model
 - `POST /api/appointments/:id/audio` upload encounter audio
 - `GET /api/compliance/status` integration and codebook freshness
 - `GET /api/codes/search?q=` CPT lookup
+
+## Transcript Quality Notes
+
+- Browser fallback speech recognition can distort medical terms.
+- Server now applies transcript cleanup before coding analysis.
+- For best quality and production use, configure Azure Speech keys.
 
 ## HIPAA Notes
 
@@ -121,3 +130,6 @@ Production HIPAA readiness still requires BAAs, security hardening, and legal/co
   - Check `AZURE_SPEECH_KEY` + `AZURE_SPEECH_REGION`
 - No OpenAI analysis suggestions
   - Check `OPENAI_API_KEY` and `OPENAI_ANALYSIS_MODEL`
+- Transcript text still noisy
+  - Configure Azure Speech (browser fallback quality is limited)
+  - Keep mic close and reduce room noise

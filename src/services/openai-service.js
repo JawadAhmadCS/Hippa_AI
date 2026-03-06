@@ -72,7 +72,7 @@ export const analyzeTranscriptForSuggestions = async ({
   appointmentId,
   insurancePlan,
   visitType,
-  segment,
+  transcriptContext,
   existingCodes = [],
 }) => {
   if (!env.openAiApiKey) {
@@ -112,8 +112,8 @@ export const analyzeTranscriptForSuggestions = async ({
                 `Insurance Plan: ${insurancePlan}`,
                 `Visit Type: ${visitType}`,
                 `Existing codes already selected: ${existingCodes.join(", ") || "none"}`,
-                "Transcript segment:",
-                segment,
+                "Transcript context (most recent first):",
+                transcriptContext,
               ].join("\n"),
             },
           ],

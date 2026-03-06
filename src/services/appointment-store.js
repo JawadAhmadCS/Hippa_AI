@@ -30,12 +30,26 @@ export const getAppointment = (appointmentId) => appointments.get(appointmentId)
 export const appendTranscriptSegment = (appointmentId, segment) => {
   const appointment = getAppointment(appointmentId);
   if (!appointment) return null;
-  appointment.transcriptSegments.push({
+  const entry = {
     text: segment.text,
+    rawText: segment.rawText ?? segment.text,
+    cleanedText: segment.cleanedText ?? segment.text,
+    quality: segment.quality ?? null,
     source: segment.source,
     at: new Date().toISOString(),
-  });
-  return appointment;
+  };
+  appointment.transcriptSegments.push(entry);
+  return entry;
+};
+
+export const getTranscriptContext = (appointmentId, limit = 6) => {
+  const appointment = getAppointment(appointmentId);
+  if (!appointment) return "";
+
+  return appointment.transcriptSegments
+    .slice(-Math.max(1, limit))
+    .map((segment) => segment.cleanedText || segment.text)
+    .join("\n");
 };
 
 export const addSuggestions = (appointmentId, suggestions, source) => {
@@ -74,4 +88,3 @@ export const addRecording = (appointmentId, recordingInfo) => {
   });
   return appointment;
 };
-

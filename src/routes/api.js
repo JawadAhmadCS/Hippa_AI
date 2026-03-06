@@ -7,6 +7,7 @@ import {
   appendTranscriptSegment,
   createAppointment,
   getAppointment,
+  getTranscriptContext,
   setRevenueTracker,
 } from "../services/appointment-store.js";
 import { writeAuditEvent } from "../services/audit-service.js";
@@ -14,7 +15,8 @@ import { getCodebookStatus, searchCodes } from "../services/codebook-service.js"
 import { estimateRevenueTracker } from "../services/revenue-service.js";
 import { analyzeTranscriptForSuggestions } from "../services/openai-service.js";
 import { getAzureSpeechToken, uploadAppointmentAudio } from "../services/azure-service.js";
-import { inferRuleBasedSuggestions, normalizeRealtimeSuggestions } from "../services/suggestion-service.js";
+import { inferRuleBasedSuggestions, normalizeAiSuggestions } from "../services/suggestion-service.js";
+import { normalizeTranscriptSegment } from "../services/transcript-service.js";
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 30 * 1024 * 1024 } });
@@ -91,19 +93,30 @@ router.post(
       return;
     }
 
-    const segment = String(request.body.segment || "").trim();
-    if (!segment) {
+    const rawSegment = String(request.body.segment || "").trim();
+    if (!rawSegment) {
       response.status(400).json({ error: "Transcript segment is required." });
       return;
     }
 
-    appendTranscriptSegment(appointment.id, {
-      text: segment,
-      source: request.body.source || "unknown",
+    const source = request.body.source || "unknown";
+    const processedSegment = await normalizeTranscriptSegment({ rawText: rawSegment, source });
+    if (!processedSegment.cleanedText) {
+      response.status(400).json({ error: "Transcript segment could not be processed." });
+      return;
+    }
+
+    const storedSegment = appendTranscriptSegment(appointment.id, {
+      text: processedSegment.cleanedText,
+      rawText: processedSegment.rawText,
+      cleanedText: processedSegment.cleanedText,
+      quality: processedSegment.quality,
+      source,
     });
 
+    const transcriptContext = getTranscriptContext(appointment.id, 8);
     const existingCodes = new Set(appointment.suggestions.map((item) => item.code));
-    const ruleSuggestions = inferRuleBasedSuggestions({ segment, existingCodes });
+    const ruleSuggestions = inferRuleBasedSuggestions({ segment: transcriptContext, existingCodes });
     const mergedRule = addSuggestions(appointment.id, ruleSuggestions, "rule-engine");
 
     let aiModel = null;
@@ -114,12 +127,12 @@ router.post(
         appointmentId: appointment.id,
         insurancePlan: appointment.insurancePlan,
         visitType: appointment.visitType,
-        segment,
+        transcriptContext,
         existingCodes: appointment.suggestions.map((item) => item.code),
       });
 
       aiModel = aiResult.model;
-      const normalizedAi = normalizeRealtimeSuggestions(aiResult.suggestions);
+      const normalizedAi = normalizeAiSuggestions(aiResult.suggestions);
       mergedAi = addSuggestions(appointment.id, normalizedAi, "openai-analysis") || { newlyAdded: [] };
     }
 
@@ -132,8 +145,10 @@ router.post(
 
     await writeAuditEvent("appointment.transcript.segment", {
       appointmentId: appointment.id,
-      source: request.body.source || "unknown",
-      segment,
+      source,
+      rawText: rawSegment,
+      processedText: processedSegment.cleanedText,
+      quality: processedSegment.quality,
       ruleGeneratedCodes: mergedRule?.newlyAdded?.map((item) => item.code) ?? [],
       aiGeneratedCodes: mergedAi?.newlyAdded?.map((item) => item.code) ?? [],
       aiModel,
@@ -141,6 +156,12 @@ router.post(
 
     response.json({
       transcriptCount: appointment.transcriptSegments.length,
+      processedSegment: {
+        source,
+        rawText: storedSegment?.rawText ?? rawSegment,
+        cleanedText: storedSegment?.cleanedText ?? processedSegment.cleanedText,
+        quality: storedSegment?.quality ?? processedSegment.quality,
+      },
       newlyAddedSuggestions: [
         ...(mergedRule?.newlyAdded ?? []),
         ...(mergedAi?.newlyAdded ?? []),
@@ -200,6 +221,7 @@ router.get(
       codebook: getCodebookStatus(),
       integrations: {
         openAiAnalysisConfigured: featureFlags.hasOpenAi,
+        transcriptCleanupConfigured: featureFlags.hasOpenAi,
         azureSpeechConfigured: featureFlags.hasAzureSpeech,
         azureBlobConfigured: featureFlags.hasAzureBlobStorage,
       },

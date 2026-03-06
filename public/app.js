@@ -5,6 +5,9 @@ const state = {
   micStream: null,
   speechRecognizer: null,
   browserRecognizer: null,
+  encounterActive: false,
+  lastTranscriptNormalized: "",
+  lastTranscriptAt: 0,
 };
 
 const ui = {
@@ -29,11 +32,19 @@ const ui = {
 
 const safeNumber = (value) => Number(value || 0).toFixed(2);
 
+const escapeHtml = (value) =>
+  String(value || "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+
 const addLog = (line, level = "info") => {
   const at = new Date().toLocaleTimeString();
   const node = document.createElement("div");
   node.className = `log-entry ${level}`;
-  node.innerHTML = `<span class="ts">${at}</span>${line}`;
+  node.innerHTML = `<span class="ts">${at}</span>${escapeHtml(line)}`;
   ui.eventLog.prepend(node);
 };
 
@@ -42,11 +53,28 @@ const clearEmpty = (container) => {
   if (empty) empty.remove();
 };
 
-const addTranscriptLine = (source, text) => {
+const addTranscriptLine = (source, cleanedText, rawText, quality) => {
   clearEmpty(ui.transcriptFeed);
+
   const line = document.createElement("div");
   line.className = "tx-line provider";
-  line.innerHTML = `<div class="speaker">${source}</div>${text}`;
+
+  const cleaned = String(cleanedText || "").trim();
+  const raw = String(rawText || "").trim();
+  const corrected = cleaned && raw && cleaned.toLowerCase() !== raw.toLowerCase();
+  const confidencePct = Math.round((Number(quality?.confidence || 0) || 0) * 100);
+
+  let html = `<div class="speaker">${escapeHtml(source)}</div>${escapeHtml(cleaned || raw)}`;
+
+  if (corrected) {
+    html += `<div class="speaker">cleaned from: ${escapeHtml(raw)}</div>`;
+  }
+
+  if (Number.isFinite(confidencePct) && confidencePct > 0) {
+    html += `<div class="speaker">quality: ${confidencePct}% (${escapeHtml(quality?.method || "n/a")})</div>`;
+  }
+
+  line.innerHTML = html;
   ui.transcriptFeed.prepend(line);
 };
 
@@ -71,12 +99,12 @@ const renderSuggestions = (suggestions) => {
     const confidence = Math.max(0, Math.min(100, Math.round((item.confidence || 0) * 100)));
     card.innerHTML = `
       <div class="cpt-top">
-        <div class="cpt-code">${item.code}</div>
+        <div class="cpt-code">${escapeHtml(item.code)}</div>
         <div class="cpt-amount">${confidence}%</div>
       </div>
-      <div class="cpt-desc"><strong>${item.title || "CPT/HCPCS suggestion"}</strong></div>
-      <div class="cpt-desc">${item.rationale || "No rationale."}</div>
-      <div class="cpt-desc">Doc: ${item.documentationNeeded || "Document medical necessity."}</div>
+      <div class="cpt-desc"><strong>${escapeHtml(item.title || "CPT/HCPCS suggestion")}</strong></div>
+      <div class="cpt-desc">${escapeHtml(item.rationale || "No rationale.")}</div>
+      <div class="cpt-desc">Doc: ${escapeHtml(item.documentationNeeded || "Document medical necessity.")}</div>
       <div class="cpt-confidence"><div class="cpt-confidence-fill" style="width:${confidence}%"></div></div>
     `;
     ui.suggestionList.appendChild(card);
@@ -108,7 +136,7 @@ const api = async (path, options = {}) => {
 const renderComplianceItem = (label, ok) => {
   const row = document.createElement("div");
   row.className = `compliance-item ${ok ? "ok" : "warn"}`;
-  row.innerHTML = `<span class="dot"></span><span>${label}: ${ok ? "Configured" : "Missing"}</span>`;
+  row.innerHTML = `<span class="dot"></span><span>${escapeHtml(label)}: ${ok ? "Configured" : "Missing"}</span>`;
   return row;
 };
 
@@ -117,6 +145,9 @@ const refreshComplianceStatus = async () => {
   ui.compliancePanel.innerHTML = "";
   ui.compliancePanel.appendChild(
     renderComplianceItem("OpenAI Analysis", status.integrations?.openAiAnalysisConfigured)
+  );
+  ui.compliancePanel.appendChild(
+    renderComplianceItem("Transcript Cleanup", status.integrations?.transcriptCleanupConfigured)
   );
   ui.compliancePanel.appendChild(
     renderComplianceItem("Azure Speech", status.integrations?.azureSpeechConfigured)
@@ -134,8 +165,8 @@ const refreshComplianceStatus = async () => {
 const summarizeNewSuggestions = (suggestions, model) => {
   if (!suggestions.length) {
     return model
-      ? `AI analysis (${model}): abhi transcript evidence se naya code recommend nahi hua.`
-      : "Rule engine: abhi transcript evidence se naya code recommend nahi hua.";
+      ? `AI analysis (${model}): transcript context se naya compliant code detect nahi hua.`
+      : "Rule engine: transcript context se naya compliant code detect nahi hua.";
   }
 
   const lines = suggestions
@@ -148,7 +179,8 @@ const summarizeNewSuggestions = (suggestions, model) => {
 };
 
 const submitTranscriptSegment = async (text, source) => {
-  if (!state.appointment) return;
+  if (!state.appointment) return null;
+
   const payload = await api(`/api/appointments/${state.appointment.id}/transcript`, {
     method: "POST",
     body: JSON.stringify({ segment: text, source }),
@@ -161,11 +193,54 @@ const submitTranscriptSegment = async (text, source) => {
   if (payload.analysis?.mode === "rule-engine+openai") {
     addLog(`Analyzed by ${payload.analysis.model || "OpenAI"}`, "good");
   }
+
+  return payload;
+};
+
+const shouldSkipDuplicateSegment = (text) => {
+  const normalized = String(text || "").trim().toLowerCase();
+  if (!normalized) return true;
+
+  const now = Date.now();
+  const isDuplicate =
+    normalized === state.lastTranscriptNormalized && now - state.lastTranscriptAt < 7000;
+
+  if (isDuplicate) {
+    return true;
+  }
+
+  state.lastTranscriptNormalized = normalized;
+  state.lastTranscriptAt = now;
+  return false;
 };
 
 const handleTranscriptSegment = async (text, source) => {
-  addTranscriptLine(source, text);
-  await submitTranscriptSegment(text, source);
+  if (shouldSkipDuplicateSegment(text)) {
+    return;
+  }
+
+  const payload = await submitTranscriptSegment(text, source);
+  if (!payload) return;
+
+  const processed = payload.processedSegment || {
+    source,
+    rawText: text,
+    cleanedText: text,
+    quality: { confidence: 0.5, method: "fallback" },
+  };
+
+  addTranscriptLine(
+    processed.source || source,
+    processed.cleanedText || text,
+    processed.rawText || text,
+    processed.quality || null
+  );
+
+  const raw = String(processed.rawText || "").trim().toLowerCase();
+  const cleaned = String(processed.cleanedText || "").trim().toLowerCase();
+  if (raw && cleaned && raw !== cleaned) {
+    addLog("Transcript auto-cleanup applied for noisy ASR text.", "good");
+  }
 };
 
 const startAzureSpeech = async () => {
@@ -221,6 +296,7 @@ const startBrowserSpeechFallback = () => {
   const recognizer = new SpeechRecognition();
   recognizer.continuous = true;
   recognizer.interimResults = false;
+  recognizer.maxAlternatives = 1;
   recognizer.lang = "en-US";
 
   recognizer.onresult = (event) => {
@@ -238,6 +314,16 @@ const startBrowserSpeechFallback = () => {
   };
 
   recognizer.onerror = (event) => addLog(`Speech fallback error: ${event.error}`, "warn");
+  recognizer.onend = () => {
+    if (state.encounterActive) {
+      try {
+        recognizer.start();
+      } catch {
+        addLog("Browser fallback recognizer restart failed.", "warn");
+      }
+    }
+  };
+
   recognizer.start();
   state.browserRecognizer = recognizer;
   addLog("Browser speech fallback started.", "good");
@@ -309,6 +395,10 @@ const startEncounter = async () => {
   });
 
   state.appointment = created.appointment;
+  state.encounterActive = true;
+  state.lastTranscriptNormalized = "";
+  state.lastTranscriptAt = 0;
+
   addLog(`Appointment created: ${state.appointment.id}`, "good");
   ui.sessionBadge.textContent = `Live: ${state.appointment.id}`;
   ui.sessionBadge.classList.add("active");
@@ -325,6 +415,7 @@ const startEncounter = async () => {
 
 const stopEncounter = async () => {
   ui.stopBtn.disabled = true;
+  state.encounterActive = false;
 
   if (state.speechRecognizer) {
     state.speechRecognizer.stopContinuousRecognitionAsync(

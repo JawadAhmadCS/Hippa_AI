@@ -37,6 +37,13 @@ const RULES = [
     keywords: ["ecg", "ekg", "electrocardiogram"],
     rationale: "ECG discussion indicates potential billable diagnostic tracing.",
   },
+  {
+    id: "moderate-mdm-medication-management",
+    code: "99214",
+    keywords: ["blood pressure", "medication", "adjust", "hypertension"],
+    rationale: "Medication management with chronic condition follow-up suggests moderate MDM.",
+    minHits: 3,
+  },
 ];
 
 const clampConfidence = (value) => Math.max(0, Math.min(0.98, Number(value) || 0));
@@ -48,7 +55,7 @@ const makeSuggestion = (code, rationale, evidenceText, baseConfidence = 0.64) =>
     code: cpt.code,
     title: cpt.title,
     rationale,
-    evidence: evidenceText.slice(0, 220),
+    evidence: evidenceText.slice(0, 240),
     documentationNeeded: cpt.documentationNeeded,
     complianceNotes: cpt.complianceNotes,
     confidence: clampConfidence(baseConfidence),
@@ -61,18 +68,19 @@ export const inferRuleBasedSuggestions = ({ segment, existingCodes }) => {
 
   return RULES.filter((rule) => {
     const hits = rule.keywords.filter((keyword) => text.includes(keyword)).length;
-    return hits >= 2;
+    const threshold = Number(rule.minHits) || 2;
+    return hits >= threshold;
   })
     .filter((rule) => !existingCodes.has(rule.code))
     .map((rule) => {
       const hits = rule.keywords.filter((keyword) => text.includes(keyword)).length;
-      const confidence = 0.58 + hits * 0.12;
+      const confidence = 0.55 + hits * 0.11;
       return makeSuggestion(rule.code, rule.rationale, segment, confidence);
     })
     .filter(Boolean);
 };
 
-export const normalizeRealtimeSuggestions = (items) => {
+export const normalizeAiSuggestions = (items) => {
   if (!Array.isArray(items)) return [];
 
   return items
@@ -83,7 +91,7 @@ export const normalizeRealtimeSuggestions = (items) => {
       return {
         code: cpt.code,
         title: cpt.title,
-        rationale: String(item?.rationale || "Realtime assistant recommendation."),
+        rationale: String(item?.rationale || "AI assistant recommendation."),
         evidence: String(item?.evidence || ""),
         documentationNeeded: String(item?.documentationNeeded || cpt.documentationNeeded),
         complianceNotes: cpt.complianceNotes,
@@ -92,4 +100,3 @@ export const normalizeRealtimeSuggestions = (items) => {
     })
     .filter(Boolean);
 };
-
