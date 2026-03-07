@@ -28,8 +28,11 @@ const ui = {
   suggestionList: document.getElementById("suggestionList"),
   baselineRevenue: document.getElementById("baselineRevenue"),
   opportunityRevenue: document.getElementById("opportunityRevenue"),
+  earnedNowRevenue: document.getElementById("earnedNowRevenue"),
   projectedRevenue: document.getElementById("projectedRevenue"),
   payerMultiplier: document.getElementById("payerMultiplier"),
+  guidanceList: document.getElementById("guidanceList"),
+  billableCodesList: document.getElementById("billableCodesList"),
   compliancePanel: document.getElementById("compliancePanel"),
   eventLog: document.getElementById("eventLog"),
   sessionBadge: document.getElementById("sessionBadge"),
@@ -186,8 +189,55 @@ const renderSuggestions = (suggestions) => {
 const renderRevenueTracker = (tracker) => {
   ui.baselineRevenue.textContent = `$${safeNumber(tracker?.baseline)}`;
   ui.opportunityRevenue.textContent = `$${safeNumber(tracker?.compliantOpportunity)}`;
+  ui.earnedNowRevenue.textContent = `$${safeNumber(tracker?.earnedNow ?? tracker?.projectedTotal)}`;
   ui.projectedRevenue.textContent = `$${safeNumber(tracker?.projectedTotal)}`;
   ui.payerMultiplier.textContent = `x${safeNumber(tracker?.payerMultiplier)}`;
+};
+
+const renderGuidance = (guidanceItems) => {
+  if (!ui.guidanceList) return;
+
+  ui.guidanceList.innerHTML = "";
+  if (!Array.isArray(guidanceItems) || guidanceItems.length === 0) {
+    ui.guidanceList.innerHTML = '<div class="empty">No targeted prompts yet.</div>';
+    return;
+  }
+
+  for (const item of guidanceItems.slice(0, 5)) {
+    const row = document.createElement("div");
+    row.className = "guidance-item";
+    const priority = String(item.priority || "medium").toUpperCase();
+    row.innerHTML = `
+      <div class="guidance-priority">${escapeHtml(priority)}</div>
+      <div>${escapeHtml(item.prompt || "")}</div>
+    `;
+    ui.guidanceList.appendChild(row);
+  }
+};
+
+const renderBillableCodes = (codes) => {
+  if (!ui.billableCodesList) return;
+
+  ui.billableCodesList.innerHTML = "";
+  if (!Array.isArray(codes) || codes.length === 0) {
+    ui.billableCodesList.innerHTML = '<div class="empty">No billable codes detected yet.</div>';
+    return;
+  }
+
+  for (const code of codes) {
+    const row = document.createElement("div");
+    row.className = "billable-code-item";
+    const kind = String(code.type || "").replaceAll("-", " ");
+    row.innerHTML = `
+      <div class="cpt-top">
+        <div class="cpt-code">${escapeHtml(code.code)}</div>
+        <div class="cpt-amount">$${safeNumber(code.estimatedAmount)}</div>
+      </div>
+      <div class="cpt-desc"><strong>${escapeHtml(code.title || "")}</strong></div>
+      <div class="cpt-desc">Type: ${escapeHtml(kind)} | Source: ${escapeHtml(code.source || "transcript")}</div>
+    `;
+    ui.billableCodesList.appendChild(row);
+  }
 };
 
 const api = async (path, options = {}) => {
@@ -253,7 +303,7 @@ const formatGuidanceText = (guidanceItems) => {
     .join(" | ");
 };
 
-const summarizeAssistantUpdate = (suggestions, guidanceItems, model) => {
+const summarizeAssistantUpdate = (suggestions, guidanceItems, model, tracker) => {
   const prefix = model ? `AI analysis (${model})` : "Assistant";
   const codePart = suggestions.length
     ? `Codes: ${suggestions.slice(0, 3).map((s) => `${s.code}: ${s.rationale || "supported"}`).join(" | ")}`
@@ -264,7 +314,9 @@ const summarizeAssistantUpdate = (suggestions, guidanceItems, model) => {
     ? `Doctor next prompts: ${guidanceText}`
     : "Doctor next prompts: continue collecting encounter details (duration, severity, and plan).";
 
-  return `${prefix}: ${codePart} ${guidancePart}`;
+  const revenuePart = `Estimated earned now: $${safeNumber(tracker?.earnedNow ?? tracker?.projectedTotal)}`;
+
+  return `${prefix}: ${codePart} ${guidancePart} ${revenuePart}`;
 };
 
 const submitTranscriptSegment = async (text, source) => {
@@ -286,9 +338,13 @@ const submitTranscriptSegment = async (text, source) => {
       summarizeAssistantUpdate(
         payload.newlyAddedSuggestions || [],
         payload.guidance?.items || [],
-        payload.analysis?.model
+        payload.analysis?.model,
+        payload.revenueTracker
       )
     );
+
+    renderGuidance(payload.guidance?.items || []);
+    renderBillableCodes(payload.revenueTracker?.billableCodes || []);
 
     if (payload.analysis?.mode === "rule-engine+openai") {
       addLog(`Analyzed by ${payload.analysis.model || "OpenAI"}`, "good");
@@ -567,6 +623,13 @@ const startEncounter = async () => {
   state.lastThrottleLogAt = 0;
   clearInterimTranscript();
 
+  ui.transcriptFeed.innerHTML = '<div class="empty">Transcript will appear here during encounter</div>';
+  ui.chatFeed.innerHTML = '<div class="empty">Assistant analysis updates will appear here</div>';
+  renderSuggestions([]);
+  renderGuidance([]);
+  renderBillableCodes([]);
+  renderRevenueTracker({ baseline: 0, compliantOpportunity: 0, earnedNow: 0, projectedTotal: 0, payerMultiplier: 1 });
+
   addLog(`Doctor ${doctorRef} started appointment ${state.appointment.id}.`, "good");
   ui.sessionBadge.textContent = `Live: ${state.appointment.id}`;
   ui.sessionBadge.classList.add("active");
@@ -627,5 +690,4 @@ ui.stopBtn.addEventListener("click", () => {
 });
 
 refreshComplianceStatus().catch((error) => addLog(`Compliance status error: ${error.message}`, "warn"));
-
 

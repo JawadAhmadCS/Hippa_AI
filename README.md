@@ -13,11 +13,11 @@ HIPAA-first medical AI assistant prototype for live doctor-patient encounters.
 
 - Live speech-to-text transcription (Azure Speech token flow + browser fallback)
 - Transcript cleanup for noisy ASR lines before analysis
-- Doctor guidance prompts for what to ask next during appointment
+- Live doctor guidance prompts for what to ask next during appointment
 - E/M guardrail: baseline code is not double-counted in compliant opportunity revenue
 - Transcript analysis with OpenAI text models (no WebRTC realtime dependency)
 - Compliant CPT/HCPCS opportunity suggestions
-- Revenue projection with insurance multiplier + Medicare fallback
+- Revenue projection with insurance multiplier + Medicare fallback, including current billable code breakdown
 - Audio recording storage (Azure Blob + local fallback)
 
 ## Important Scope
@@ -103,7 +103,7 @@ Also used:
 - `POST /api/appointments` create encounter (doctor + intake consent required)
 - `GET /api/appointments/:id` encounter status
 - `GET /api/azure/speech-token` Azure speech token for live transcription
-- `POST /api/appointments/:id/transcript` ingest transcript + cleanup + coding + doctor guidance
+- `POST /api/appointments/:id/transcript` ingest transcript + cleanup + coding + doctor guidance + live revenue/code breakdown
 - `POST /api/appointments/:id/audio` upload encounter audio
 - `GET /api/compliance/status` integration, access model, and codebook freshness
 - `GET /api/codes/search?q=` CPT lookup
