@@ -100,3 +100,73 @@ export const normalizeAiSuggestions = (items) => {
     })
     .filter(Boolean);
 };
+
+const containsAny = (text, terms) => terms.some((term) => text.includes(term));
+
+export const inferRuleBasedGuidance = ({ segment }) => {
+  const text = String(segment || "").toLowerCase();
+  if (!text) return [];
+
+  const guidance = [];
+
+  if (containsAny(text, ["blood pressure", "hypertension", "150", "medication"])) {
+    guidance.push({
+      prompt: "Pichlay 7 din ke home blood pressure readings poochain aur trend confirm karain.",
+      rationale: "Medication adjustment ke liye objective BP trend documentation chahiye.",
+      priority: "high",
+    });
+    guidance.push({
+      prompt: "Medication adherence aur side effects specifically verify karain.",
+      rationale: "Hypertension follow-up me adherence + side effects MDM support karte hain.",
+      priority: "high",
+    });
+  }
+
+  if (containsAny(text, ["tired", "fatigue", "weak", "thakan"])) {
+    guidance.push({
+      prompt: "Fatigue ki duration, severity, aur functional impact quantify karain.",
+      rationale: "Symptom characterization differential aur necessity justify karta hai.",
+      priority: "medium",
+    });
+  }
+
+  if (containsAny(text, ["blood test", "lab", "cbc", "thyroid"])) {
+    guidance.push({
+      prompt: "Lab order se pehle clear clinical indication document karain.",
+      rationale: "Medical necessity documentation billing/compliance ke liye important hai.",
+      priority: "medium",
+    });
+  }
+
+  if (!guidance.length) {
+    guidance.push({
+      prompt: "Chief complaint ke liye symptom onset, duration, aur progression clarify karain.",
+      rationale: "Structured HPI documentation coding accuracy improve karti hai.",
+      priority: "low",
+    });
+  }
+
+  const seen = new Set();
+  return guidance.filter((item) => {
+    const key = item.prompt.toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+};
+
+export const normalizeAiGuidance = (items) => {
+  if (!Array.isArray(items)) return [];
+
+  const allowedPriorities = new Set(["high", "medium", "low"]);
+  return items
+    .map((item) => {
+      const prompt = String(item?.prompt || "").trim();
+      const rationale = String(item?.rationale || "").trim();
+      const rawPriority = String(item?.priority || "medium").toLowerCase().trim();
+      const priority = allowedPriorities.has(rawPriority) ? rawPriority : "medium";
+      if (!prompt) return null;
+      return { prompt, rationale, priority };
+    })
+    .filter(Boolean);
+};

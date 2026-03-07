@@ -1,16 +1,18 @@
 import { env } from "../config/env.js";
 
 const analysisSystemInstructions = `
-You are a medical coding support assistant.
-Your task is to produce compliance-safe, evidence-based coding opportunities from transcript text.
+You are a medical encounter copilot for doctors.
+You produce:
+1) compliance-safe coding opportunities
+2) practical conversation guidance for what doctor should ask or clarify next.
 
 Rules:
 - Never upcode.
 - Never suggest medically unnecessary services.
 - Only suggest codes supported by explicit transcript evidence.
 - Do not suggest baseline E/M code if it is already assumed for the visit.
-- If evidence is weak, do not suggest the code.
-- Keep rationale short and concrete.
+- Guidance must be brief, concrete, and phrased as doctor prompts.
+- If evidence is weak, return empty arrays.
 - Return JSON that matches schema.
 `.trim();
 
@@ -34,19 +36,40 @@ const outputSchema = {
         required: ["code", "rationale", "documentationNeeded", "confidence", "evidence"],
       },
     },
+    guidance: {
+      type: "array",
+      maxItems: 4,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          prompt: { type: "string" },
+          rationale: { type: "string" },
+          priority: { type: "string", enum: ["high", "medium", "low"] },
+        },
+        required: ["prompt", "rationale", "priority"],
+      },
+    },
   },
-  required: ["suggestions"],
+  required: ["suggestions", "guidance"],
 };
 
 const parseStructuredOutput = (result) => {
-  const candidate = result?.output_text;
-  if (candidate && typeof candidate === "string") {
+  const parseCandidate = (candidate) => {
+    if (!candidate || typeof candidate !== "string") return null;
     try {
-      const parsed = JSON.parse(candidate);
-      return Array.isArray(parsed?.suggestions) ? parsed.suggestions : [];
+      return JSON.parse(candidate);
     } catch {
-      return [];
+      return null;
     }
+  };
+
+  const fromOutputText = parseCandidate(result?.output_text);
+  if (fromOutputText) {
+    return {
+      suggestions: Array.isArray(fromOutputText.suggestions) ? fromOutputText.suggestions : [],
+      guidance: Array.isArray(fromOutputText.guidance) ? fromOutputText.guidance : [],
+    };
   }
 
   const chunks = result?.output ?? [];
@@ -56,17 +79,21 @@ const parseStructuredOutput = (result) => {
     .join(" ")
     .trim();
 
-  if (!text) return [];
+  if (!text) return { suggestions: [], guidance: [] };
+
   const first = text.indexOf("{");
   const last = text.lastIndexOf("}");
-  if (first === -1 || last === -1 || last <= first) return [];
-
-  try {
-    const parsed = JSON.parse(text.slice(first, last + 1));
-    return Array.isArray(parsed?.suggestions) ? parsed.suggestions : [];
-  } catch {
-    return [];
+  if (first === -1 || last === -1 || last <= first) {
+    return { suggestions: [], guidance: [] };
   }
+
+  const parsed = parseCandidate(text.slice(first, last + 1));
+  if (!parsed) return { suggestions: [], guidance: [] };
+
+  return {
+    suggestions: Array.isArray(parsed.suggestions) ? parsed.suggestions : [],
+    guidance: Array.isArray(parsed.guidance) ? parsed.guidance : [],
+  };
 };
 
 export const analyzeTranscriptForSuggestions = async ({
@@ -78,7 +105,7 @@ export const analyzeTranscriptForSuggestions = async ({
   existingCodes = [],
 }) => {
   if (!env.openAiApiKey) {
-    return { model: null, suggestions: [] };
+    return { model: null, suggestions: [], guidance: [] };
   }
 
   const response = await fetch("https://api.openai.com/v1/responses", {
@@ -90,11 +117,11 @@ export const analyzeTranscriptForSuggestions = async ({
     body: JSON.stringify({
       model: env.openAiAnalysisModel,
       temperature: 0.1,
-      max_output_tokens: 500,
+      max_output_tokens: 650,
       text: {
         format: {
           type: "json_schema",
-          name: "coding_suggestions",
+          name: "encounter_guidance_and_coding",
           schema: outputSchema,
           strict: true,
         },
@@ -131,10 +158,11 @@ export const analyzeTranscriptForSuggestions = async ({
   }
 
   const result = await response.json();
-  const suggestions = parseStructuredOutput(result);
+  const parsed = parseStructuredOutput(result);
 
   return {
     model: result?.model || env.openAiAnalysisModel,
-    suggestions,
+    suggestions: parsed.suggestions,
+    guidance: parsed.guidance,
   };
 };

@@ -11,7 +11,9 @@ const state = {
 };
 
 const ui = {
+  doctorRef: document.getElementById("doctorRef"),
   patientRef: document.getElementById("patientRef"),
+  consentFormId: document.getElementById("consentFormId"),
   insurancePlan: document.getElementById("insurancePlan"),
   visitType: document.getElementById("visitType"),
   consentGiven: document.getElementById("consentGiven"),
@@ -156,26 +158,40 @@ const refreshComplianceStatus = async () => {
     renderComplianceItem("Azure Blob", status.integrations?.azureBlobConfigured)
   );
 
+  const access = document.createElement("div");
+  access.className = "compliance-item ok";
+  access.innerHTML = `<span class="dot"></span><span>Access Model: Doctor-only workspace</span>`;
+  ui.compliancePanel.appendChild(access);
+
   const codebook = document.createElement("div");
   codebook.className = `compliance-item ${status.codebook?.stale ? "warn" : "ok"}`;
   codebook.innerHTML = `<span class="dot"></span><span>Codebook Age: ${status.codebook?.ageDays ?? "?"} days</span>`;
   ui.compliancePanel.appendChild(codebook);
 };
 
-const summarizeNewSuggestions = (suggestions, model) => {
-  if (!suggestions.length) {
-    return model
-      ? `AI analysis (${model}): transcript context se naya compliant code detect nahi hua.`
-      : "Rule engine: transcript context se naya compliant code detect nahi hua.";
+const formatGuidanceText = (guidanceItems) => {
+  if (!Array.isArray(guidanceItems) || guidanceItems.length === 0) {
+    return "";
   }
 
-  const lines = suggestions
+  return guidanceItems
     .slice(0, 3)
-    .map((s) => `${s.code}: ${s.rationale || "supported by transcript"}`)
+    .map((item, index) => `${index + 1}. ${item.prompt}`)
     .join(" | ");
+};
 
-  const prefix = model ? `AI analysis (${model})` : "Rule engine";
-  return `${prefix}: ${lines}`;
+const summarizeAssistantUpdate = (suggestions, guidanceItems, model) => {
+  const prefix = model ? `AI analysis (${model})` : "Assistant";
+  const codePart = suggestions.length
+    ? `Codes: ${suggestions.slice(0, 3).map((s) => `${s.code}: ${s.rationale || "supported"}`).join(" | ")}`
+    : "Codes: koi naya compliant code detect nahi hua.";
+
+  const guidanceText = formatGuidanceText(guidanceItems);
+  const guidancePart = guidanceText
+    ? `Doctor next prompts: ${guidanceText}`
+    : "Doctor next prompts: encounter context gather karte raho (duration, severity, plan).";
+
+  return `${prefix}: ${codePart} ${guidancePart}`;
 };
 
 const submitTranscriptSegment = async (text, source) => {
@@ -188,7 +204,13 @@ const submitTranscriptSegment = async (text, source) => {
 
   renderSuggestions(payload.allSuggestions || []);
   renderRevenueTracker(payload.revenueTracker || {});
-  addAssistantMessage(summarizeNewSuggestions(payload.newlyAddedSuggestions || [], payload.analysis?.model));
+  addAssistantMessage(
+    summarizeAssistantUpdate(
+      payload.newlyAddedSuggestions || [],
+      payload.guidance?.items || [],
+      payload.analysis?.model
+    )
+  );
 
   if (payload.analysis?.mode === "rule-engine+openai") {
     addLog(`Analyzed by ${payload.analysis.model || "OpenAI"}`, "good");
@@ -376,18 +398,33 @@ const stopRecordingAndUpload = async () => {
 
 const startEncounter = async () => {
   if (!ui.consentGiven.checked) {
-    alert("Consent is required before starting encounter recording.");
+    alert("Intake consent form must be signed before recording.");
     return;
   }
 
+  const doctorRef = ui.doctorRef.value.trim();
   const patientRef = ui.patientRef.value.trim() || "anonymous";
+  const consentFormId = ui.consentFormId.value.trim();
   const insurancePlan = ui.insurancePlan.value;
   const visitType = ui.visitType.value;
+
+  if (!doctorRef) {
+    alert("Doctor reference is required.");
+    return;
+  }
+
+  if (!consentFormId) {
+    alert("Consent Form ID is required.");
+    return;
+  }
 
   const created = await api("/api/appointments", {
     method: "POST",
     body: JSON.stringify({
+      doctorRef,
       patientRef,
+      consentFormId,
+      consentSignedAt: new Date().toISOString(),
       insurancePlan,
       visitType,
       consentGiven: true,
@@ -399,7 +436,7 @@ const startEncounter = async () => {
   state.lastTranscriptNormalized = "";
   state.lastTranscriptAt = 0;
 
-  addLog(`Appointment created: ${state.appointment.id}`, "good");
+  addLog(`Doctor ${doctorRef} started appointment ${state.appointment.id}.`, "good");
   ui.sessionBadge.textContent = `Live: ${state.appointment.id}`;
   ui.sessionBadge.classList.add("active");
 

@@ -1,9 +1,19 @@
 # Helix Revenue Copilot (Prototype)
 
-HIPAA-first medical AI assistant prototype for live doctor-patient encounters:
+HIPAA-first medical AI assistant prototype for live doctor-patient encounters.
+
+## Access Model (Doctor-Only)
+
+- Doctor has full access to recordings, transcripts, suggestions, and coding output.
+- Patient has no portal access in this prototype.
+- Patient action is only intake consent signing before recording starts.
+- Encounter creation now requires `doctorRef`, `consentFormId`, and `consentGiven=true`.
+
+## Core Features
 
 - Live speech-to-text transcription (Azure Speech token flow + browser fallback)
 - Transcript cleanup for noisy ASR lines before analysis
+- Doctor guidance prompts for what to ask next during appointment
 - E/M guardrail: baseline code is not double-counted in compliant opportunity revenue
 - Transcript analysis with OpenAI text models (no WebRTC realtime dependency)
 - Compliant CPT/HCPCS opportunity suggestions
@@ -20,8 +30,6 @@ This is a prototype for compliant workflow design. It is not legal advice and no
 - Transcript cleanup model: `OPENAI_TRANSCRIPT_CLEANUP_MODEL` (default `gpt-4.1-mini`)
 - Optional deeper review model: `OPENAI_FINAL_REVIEW_MODEL` (default `gpt-4.1`)
 - Transcription: Azure Speech (recommended) or browser fallback
-
-Reason: for this workflow, low-latency text analysis over transcript chunks is enough; realtime WebRTC model is not required.
 
 ## Quick Start
 
@@ -64,7 +72,7 @@ curl http://localhost:8787/api/compliance/status
 Expected:
 
 - `/api/health` => `ok: true`
-- `/api/compliance/status` => integration flags + codebook freshness
+- `/api/compliance/status` => integration flags + doctor-only access model
 
 ## Environment Variables
 
@@ -87,27 +95,21 @@ Also used:
 - `COMPLIANCE_LOG_RETENTION_DAYS`
 - `CODEBOOK_STALE_DAYS`
 
-Fallback behavior:
-
-- Missing OpenAI key => app still runs with rule-engine suggestions
-- Missing Azure speech keys => browser speech recognition fallback
-- Missing Azure storage => local `uploads/` fallback
-
 ## API Summary
 
-- `POST /api/appointments` create encounter
+- `POST /api/appointments` create encounter (doctor + intake consent required)
 - `GET /api/appointments/:id` encounter status
 - `GET /api/azure/speech-token` Azure speech token for live transcription
-- `POST /api/appointments/:id/transcript` ingest transcript segment + cleanup + analyze with rule engine and OpenAI model
+- `POST /api/appointments/:id/transcript` ingest transcript + cleanup + coding + doctor guidance
 - `POST /api/appointments/:id/audio` upload encounter audio
-- `GET /api/compliance/status` integration and codebook freshness
+- `GET /api/compliance/status` integration, access model, and codebook freshness
 - `GET /api/codes/search?q=` CPT lookup
 
 ## Transcript Quality Notes
 
 - Browser fallback speech recognition can distort medical terms.
-- Server now applies transcript cleanup before coding analysis.
-- For best quality and production use, configure Azure Speech keys.
+- Server applies transcript cleanup before coding analysis.
+- For best quality, configure Azure Speech keys.
 
 ## HIPAA Notes
 
@@ -115,22 +117,9 @@ Implementation notes: [docs/HIPAA-IMPLEMENTATION.md](docs/HIPAA-IMPLEMENTATION.m
 
 Current controls include:
 
-- Consent gate before transcription/recording
+- Intake consent gate before transcription/recording
 - PHI-minimized audit payloads
 - Hash-chained audit events
 - Compliance-safe coding prompt policy
 
 Production HIPAA readiness still requires BAAs, security hardening, and legal/compliance review.
-
-## Troubleshooting
-
-- `EADDRINUSE: 8787`
-  - Another process already uses port `8787`
-  - Stop that process or change `PORT` in `.env`
-- Azure transcription not starting
-  - Check `AZURE_SPEECH_KEY` + `AZURE_SPEECH_REGION`
-- No OpenAI analysis suggestions
-  - Check `OPENAI_API_KEY` and `OPENAI_ANALYSIS_MODEL`
-- Transcript text still noisy
-  - Configure Azure Speech (browser fallback quality is limited)
-  - Keep mic close and reduce room noise

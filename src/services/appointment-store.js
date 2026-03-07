@@ -2,14 +2,29 @@ import crypto from "node:crypto";
 
 const appointments = new Map();
 
-export const createAppointment = ({ patientRef, insurancePlan, visitType, consentGiven }) => {
+export const createAppointment = ({
+  patientRef,
+  doctorRef,
+  insurancePlan,
+  visitType,
+  consentGiven,
+  consentFormId,
+  consentSignedAt,
+}) => {
   const id = crypto.randomUUID();
   const appointment = {
     id,
     patientRef,
+    doctorRef,
     insurancePlan: insurancePlan || "medicare",
     visitType: visitType || "follow-up",
     consentGiven: Boolean(consentGiven),
+    consentFormId: consentFormId || "",
+    consentSignedAt: consentSignedAt || new Date().toISOString(),
+    accessPolicy: {
+      ownerRole: "doctor",
+      patientAccess: false,
+    },
     createdAt: new Date().toISOString(),
     transcriptSegments: [],
     suggestions: [],

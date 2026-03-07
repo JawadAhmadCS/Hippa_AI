@@ -457,17 +457,25 @@
           <p class="eyebrow">HIPAA-FIRST PROTOTYPE</p>
           <h1>Helix Revenue Copilot</h1>
           <p class="subtitle">
-            Live transcription + compliant billing suggestions via Azure transcription + OpenAI analysis models
+            Doctor-only workspace: recordings, transcripts, and compliant billing suggestions via Azure transcription + OpenAI analysis models
           </p>
         </div>
         <div id="sessionBadge" class="badge">Session Idle</div>
       </header>
 
       <!-- CONTROLS -->
-      <section class="controls">
+            <section class="controls">
+        <div class="field">
+          <label for="doctorRef">Doctor Reference</label>
+          <input id="doctorRef" placeholder="e.g. DR-001" />
+        </div>
         <div class="field">
           <label for="patientRef">Patient Reference</label>
           <input id="patientRef" placeholder="e.g. PT-1042" />
+        </div>
+        <div class="field">
+          <label for="consentFormId">Intake Consent Form ID</label>
+          <input id="consentFormId" placeholder="e.g. CONSENT-2026-0012" />
         </div>
         <div class="field">
           <label for="insurancePlan">Insurance Plan</label>
@@ -488,7 +496,7 @@
         </div>
         <label class="consent">
           <input id="consentGiven" type="checkbox" />
-          <span>Patient consent for recording + AI assistance</span>
+          <span>Intake consent signed by patient (doctor retains records)</span>
         </label>
         <div class="btn-row">
           <button id="startBtn" class="btn primary">Start Encounter</button>
@@ -595,3 +603,5 @@
     <script type="module" src="./app.js"></script>
   </body>
 </html>
+
+

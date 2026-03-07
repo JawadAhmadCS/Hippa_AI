@@ -15,7 +15,12 @@ import { getCodebookStatus, searchCodes } from "../services/codebook-service.js"
 import { estimateRevenueTracker } from "../services/revenue-service.js";
 import { analyzeTranscriptForSuggestions } from "../services/openai-service.js";
 import { getAzureSpeechToken, uploadAppointmentAudio } from "../services/azure-service.js";
-import { inferRuleBasedSuggestions, normalizeAiSuggestions } from "../services/suggestion-service.js";
+import {
+  inferRuleBasedGuidance,
+  inferRuleBasedSuggestions,
+  normalizeAiGuidance,
+  normalizeAiSuggestions,
+} from "../services/suggestion-service.js";
 import { normalizeTranscriptSegment } from "../services/transcript-service.js";
 
 const router = express.Router();
@@ -47,18 +52,42 @@ router.get("/health", (_request, response) => {
 router.post(
   "/appointments",
   withAsync(async (request, response) => {
+    const doctorRef = String(request.body.doctorRef || "").trim();
+    const patientRef = String(request.body.patientRef || "anonymous").trim();
+    const consentFormId = String(request.body.consentFormId || "").trim();
+    const consentGiven = Boolean(request.body.consentGiven);
+
+    if (!doctorRef) {
+      response.status(400).json({ error: "Doctor reference is required." });
+      return;
+    }
+
+    if (!consentGiven || !consentFormId) {
+      response.status(400).json({
+        error: "Intake consent form must be signed before encounter recording.",
+      });
+      return;
+    }
+
     const appointment = createAppointment({
-      patientRef: request.body.patientRef || "anonymous",
+      patientRef,
+      doctorRef,
       insurancePlan: request.body.insurancePlan || "medicare",
       visitType: request.body.visitType || "follow-up",
-      consentGiven: request.body.consentGiven,
+      consentGiven,
+      consentFormId,
+      consentSignedAt: request.body.consentSignedAt,
     });
 
     await writeAuditEvent("appointment.created", {
       appointmentId: appointment.id,
       patientRef: appointment.patientRef,
+      doctorRef: appointment.doctorRef,
       insurancePlan: appointment.insurancePlan,
       consentGiven: appointment.consentGiven,
+      consentFormId: appointment.consentFormId,
+      consentSignedAt: appointment.consentSignedAt,
+      accessPolicy: appointment.accessPolicy,
     });
 
     response.status(201).json({ appointment });
@@ -126,6 +155,8 @@ router.post(
 
     const mergedRule = addSuggestions(appointment.id, ruleSuggestions, "rule-engine");
 
+    const guidanceItems = inferRuleBasedGuidance({ segment: transcriptContext });
+
     let aiModel = null;
     let mergedAi = { newlyAdded: [] };
 
@@ -145,6 +176,16 @@ router.post(
         .filter((item) => Number(item.confidence || 0) >= 0.62);
 
       mergedAi = addSuggestions(appointment.id, normalizedAi, "openai-analysis") || { newlyAdded: [] };
+
+      const aiGuidance = normalizeAiGuidance(aiResult.guidance);
+      const existingPromptSet = new Set(guidanceItems.map((item) => item.prompt.toLowerCase()));
+      for (const suggestion of aiGuidance) {
+        const key = suggestion.prompt.toLowerCase();
+        if (!existingPromptSet.has(key)) {
+          guidanceItems.push(suggestion);
+          existingPromptSet.add(key);
+        }
+      }
     }
 
     const tracker = estimateRevenueTracker({
@@ -156,12 +197,14 @@ router.post(
 
     await writeAuditEvent("appointment.transcript.segment", {
       appointmentId: appointment.id,
+      doctorRef: appointment.doctorRef,
       source,
       rawText: rawSegment,
       processedText: processedSegment.cleanedText,
       quality: processedSegment.quality,
       ruleGeneratedCodes: mergedRule?.newlyAdded?.map((item) => item.code) ?? [],
       aiGeneratedCodes: mergedAi?.newlyAdded?.map((item) => item.code) ?? [],
+      guidanceCount: guidanceItems.length,
       aiModel,
     });
 
@@ -178,6 +221,9 @@ router.post(
         ...(mergedAi?.newlyAdded ?? []),
       ],
       allSuggestions: appointment.suggestions,
+      guidance: {
+        items: guidanceItems.slice(0, 6),
+      },
       revenueTracker: appointment.revenueTracker,
       analysis: {
         model: aiModel,
@@ -208,6 +254,7 @@ router.post(
     addRecording(appointment.id, uploaded);
     await writeAuditEvent("appointment.audio.uploaded", {
       appointmentId: appointment.id,
+      doctorRef: appointment.doctorRef,
       provider: uploaded.provider,
       mimeType: uploaded.mimeType,
       blobName: uploaded.blobName,
@@ -236,8 +283,13 @@ router.get(
         azureSpeechConfigured: featureFlags.hasAzureSpeech,
         azureBlobConfigured: featureFlags.hasAzureBlobStorage,
       },
+      accessModel: {
+        primaryUser: "doctor",
+        patientPortalAccess: false,
+        consentRequiredAtIntake: true,
+      },
       notes: [
-        "Prototype enforces consent gate before transcription capture.",
+        "Prototype enforces intake consent gate before transcription capture.",
         "Audit trail uses hash chaining and PHI-redacted payloads.",
         "Final coding should always be reviewed by certified billing/coding staff.",
       ],
