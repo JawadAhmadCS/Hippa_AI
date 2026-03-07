@@ -111,37 +111,37 @@ export const inferRuleBasedGuidance = ({ segment }) => {
 
   if (containsAny(text, ["blood pressure", "hypertension", "150", "medication"])) {
     guidance.push({
-      prompt: "Pichlay 7 din ke home blood pressure readings poochain aur trend confirm karain.",
-      rationale: "Medication adjustment ke liye objective BP trend documentation chahiye.",
+      prompt: "Ask for home blood pressure readings from the last 7 days and confirm the trend.",
+      rationale: "Objective blood pressure trend documentation supports safe medication adjustment.",
       priority: "high",
     });
     guidance.push({
-      prompt: "Medication adherence aur side effects specifically verify karain.",
-      rationale: "Hypertension follow-up me adherence + side effects MDM support karte hain.",
+      prompt: "Verify medication adherence and possible side effects explicitly.",
+      rationale: "Adherence and side-effect review are critical in hypertension follow-up MDM.",
       priority: "high",
     });
   }
 
-  if (containsAny(text, ["tired", "fatigue", "weak", "thakan"])) {
+  if (containsAny(text, ["tired", "fatigue", "weak"])) {
     guidance.push({
-      prompt: "Fatigue ki duration, severity, aur functional impact quantify karain.",
-      rationale: "Symptom characterization differential aur necessity justify karta hai.",
+      prompt: "Quantify fatigue duration, severity, and functional impact.",
+      rationale: "Detailed symptom characterization supports differential assessment and medical necessity.",
       priority: "medium",
     });
   }
 
   if (containsAny(text, ["blood test", "lab", "cbc", "thyroid"])) {
     guidance.push({
-      prompt: "Lab order se pehle clear clinical indication document karain.",
-      rationale: "Medical necessity documentation billing/compliance ke liye important hai.",
+      prompt: "Document a clear clinical indication before ordering laboratory tests.",
+      rationale: "Medical necessity documentation is important for billing and compliance.",
       priority: "medium",
     });
   }
 
   if (!guidance.length) {
     guidance.push({
-      prompt: "Chief complaint ke liye symptom onset, duration, aur progression clarify karain.",
-      rationale: "Structured HPI documentation coding accuracy improve karti hai.",
+      prompt: "Clarify symptom onset, duration, and progression for the chief complaint.",
+      rationale: "Structured HPI documentation improves coding accuracy.",
       priority: "low",
     });
   }

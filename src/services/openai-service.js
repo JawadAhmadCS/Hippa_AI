@@ -116,8 +116,8 @@ export const analyzeTranscriptForSuggestions = async ({
     },
     body: JSON.stringify({
       model: env.openAiAnalysisModel,
-      temperature: 0.1,
-      max_output_tokens: 650,
+      temperature: 0,
+      max_output_tokens: 320,
       text: {
         format: {
           type: "json_schema",
@@ -166,3 +166,4 @@ export const analyzeTranscriptForSuggestions = async ({
     guidance: parsed.guidance,
   };
 };
+

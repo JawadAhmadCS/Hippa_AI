@@ -1,6 +1,6 @@
 import express from "express";
 import multer from "multer";
-import { featureFlags } from "../config/env.js";
+import { env, featureFlags } from "../config/env.js";
 import {
   addRecording,
   addSuggestions,
@@ -45,6 +45,16 @@ const withAsync = (handler) => async (request, response) => {
   }
 };
 
+const fireAndForgetAudit = (eventType, payload) => {
+  writeAuditEvent(eventType, payload).catch(() => {});
+};
+
+const countWords = (text) =>
+  String(text || "")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean).length;
+
 router.get("/health", (_request, response) => {
   response.json({ ok: true, at: new Date().toISOString() });
 });
@@ -79,7 +89,7 @@ router.post(
       consentSignedAt: request.body.consentSignedAt,
     });
 
-    await writeAuditEvent("appointment.created", {
+    fireAndForgetAudit("appointment.created", {
       appointmentId: appointment.id,
       patientRef: appointment.patientRef,
       doctorRef: appointment.doctorRef,
@@ -145,7 +155,7 @@ router.post(
       source,
     });
 
-    const transcriptContext = getTranscriptContext(appointment.id, 8);
+    const transcriptContext = getTranscriptContext(appointment.id, 6);
     const existingCodes = new Set(appointment.suggestions.map((item) => item.code));
 
     const ruleSuggestions = inferRuleBasedSuggestions({
@@ -159,31 +169,55 @@ router.post(
 
     let aiModel = null;
     let mergedAi = { newlyAdded: [] };
+    let aiSkipReason = null;
 
     if (featureFlags.hasOpenAi) {
-      const aiResult = await analyzeTranscriptForSuggestions({
-        appointmentId: appointment.id,
-        insurancePlan: appointment.insurancePlan,
-        visitType: appointment.visitType,
-        transcriptContext,
-        baselineCode,
-        existingCodes: appointment.suggestions.map((item) => item.code),
-      });
+      const segmentWordCount = countWords(processedSegment.cleanedText);
+      const now = Date.now();
+      const lastAiRunAt = Number(appointment.analysisState?.lastAiRunAt || 0);
+      const enoughWords = segmentWordCount >= env.aiMinWordsForAnalysis;
+      const enoughTime = now - lastAiRunAt >= env.aiMinIntervalMs;
 
-      aiModel = aiResult.model;
-      const normalizedAi = normalizeAiSuggestions(aiResult.suggestions)
-        .filter((item) => item.code !== baselineCode)
-        .filter((item) => Number(item.confidence || 0) >= 0.62);
+      if (!enoughWords) {
+        aiSkipReason = "segment-too-short";
+      } else if (!enoughTime) {
+        aiSkipReason = "throttled";
+      } else {
+        appointment.analysisState = {
+          ...(appointment.analysisState || {}),
+          lastAiRunAt: now,
+        };
 
-      mergedAi = addSuggestions(appointment.id, normalizedAi, "openai-analysis") || { newlyAdded: [] };
+        try {
+          const aiResult = await analyzeTranscriptForSuggestions({
+            appointmentId: appointment.id,
+            insurancePlan: appointment.insurancePlan,
+            visitType: appointment.visitType,
+            transcriptContext,
+            baselineCode,
+            existingCodes: appointment.suggestions.map((item) => item.code),
+          });
 
-      const aiGuidance = normalizeAiGuidance(aiResult.guidance);
-      const existingPromptSet = new Set(guidanceItems.map((item) => item.prompt.toLowerCase()));
-      for (const suggestion of aiGuidance) {
-        const key = suggestion.prompt.toLowerCase();
-        if (!existingPromptSet.has(key)) {
-          guidanceItems.push(suggestion);
-          existingPromptSet.add(key);
+          aiModel = aiResult.model;
+          const normalizedAi = normalizeAiSuggestions(aiResult.suggestions)
+            .filter((item) => item.code !== baselineCode)
+            .filter((item) => Number(item.confidence || 0) >= 0.62);
+
+          mergedAi = addSuggestions(appointment.id, normalizedAi, "openai-analysis") || {
+            newlyAdded: [],
+          };
+
+          const aiGuidance = normalizeAiGuidance(aiResult.guidance);
+          const existingPromptSet = new Set(guidanceItems.map((item) => item.prompt.toLowerCase()));
+          for (const suggestion of aiGuidance) {
+            const key = suggestion.prompt.toLowerCase();
+            if (!existingPromptSet.has(key)) {
+              guidanceItems.push(suggestion);
+              existingPromptSet.add(key);
+            }
+          }
+        } catch {
+          aiSkipReason = "openai-error";
         }
       }
     }
@@ -195,7 +229,7 @@ router.post(
     });
     setRevenueTracker(appointment.id, tracker);
 
-    await writeAuditEvent("appointment.transcript.segment", {
+    fireAndForgetAudit("appointment.transcript.segment", {
       appointmentId: appointment.id,
       doctorRef: appointment.doctorRef,
       source,
@@ -206,7 +240,14 @@ router.post(
       aiGeneratedCodes: mergedAi?.newlyAdded?.map((item) => item.code) ?? [],
       guidanceCount: guidanceItems.length,
       aiModel,
+      aiSkipReason,
     });
+
+    const analysisMode = featureFlags.hasOpenAi
+      ? aiModel
+        ? "rule-engine+openai"
+        : "rule-engine-throttled"
+      : "rule-engine-only";
 
     response.json({
       transcriptCount: appointment.transcriptSegments.length,
@@ -216,10 +257,7 @@ router.post(
         cleanedText: storedSegment?.cleanedText ?? processedSegment.cleanedText,
         quality: storedSegment?.quality ?? processedSegment.quality,
       },
-      newlyAddedSuggestions: [
-        ...(mergedRule?.newlyAdded ?? []),
-        ...(mergedAi?.newlyAdded ?? []),
-      ],
+      newlyAddedSuggestions: [...(mergedRule?.newlyAdded ?? []), ...(mergedAi?.newlyAdded ?? [])],
       allSuggestions: appointment.suggestions,
       guidance: {
         items: guidanceItems.slice(0, 6),
@@ -227,7 +265,8 @@ router.post(
       revenueTracker: appointment.revenueTracker,
       analysis: {
         model: aiModel,
-        mode: featureFlags.hasOpenAi ? "rule-engine+openai" : "rule-engine-only",
+        mode: analysisMode,
+        skipReason: aiSkipReason,
       },
     });
   })
@@ -252,7 +291,7 @@ router.post(
     });
 
     addRecording(appointment.id, uploaded);
-    await writeAuditEvent("appointment.audio.uploaded", {
+    fireAndForgetAudit("appointment.audio.uploaded", {
       appointmentId: appointment.id,
       doctorRef: appointment.doctorRef,
       provider: uploaded.provider,
@@ -279,7 +318,8 @@ router.get(
       codebook: getCodebookStatus(),
       integrations: {
         openAiAnalysisConfigured: featureFlags.hasOpenAi,
-        transcriptCleanupConfigured: featureFlags.hasOpenAi,
+        transcriptCleanupConfigured: true,
+        transcriptCleanupAiEnabled: featureFlags.hasOpenAi && env.enableAiTranscriptCleanup,
         azureSpeechConfigured: featureFlags.hasAzureSpeech,
         azureBlobConfigured: featureFlags.hasAzureBlobStorage,
       },
@@ -298,3 +338,4 @@ router.get(
 );
 
 export default router;
+

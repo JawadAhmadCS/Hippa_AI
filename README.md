@@ -89,6 +89,9 @@ Also used:
 
 - `OPENAI_ANALYSIS_MODEL` (default `gpt-4.1-mini`)
 - `OPENAI_TRANSCRIPT_CLEANUP_MODEL` (default `gpt-4.1-mini`)
+- `ENABLE_AI_TRANSCRIPT_CLEANUP` (default `false`)
+- `AI_MIN_ANALYSIS_INTERVAL_MS` (default `3500`)
+- `AI_MIN_WORDS_FOR_ANALYSIS` (default `6`)
 - `OPENAI_FINAL_REVIEW_MODEL` (default `gpt-4.1`)
 - `PORT` (default `8787`)
 - `AZURE_STORAGE_CONTAINER` (default `appointment-audio`)
@@ -108,8 +111,14 @@ Also used:
 ## Transcript Quality Notes
 
 - Browser fallback speech recognition can distort medical terms.
-- Server applies transcript cleanup before coding analysis.
-- For best quality, configure Azure Speech keys.
+- Server applies deterministic cleanup immediately; optional AI cleanup can be enabled with `ENABLE_AI_TRANSCRIPT_CLEANUP=true`.
+- For best quality and lowest latency, configure Azure Speech keys.
+
+## Latency Tuning
+
+- Transcript lines render instantly in UI, then sync to backend in the background.
+- OpenAI coding analysis is throttled by `AI_MIN_ANALYSIS_INTERVAL_MS` to reduce lag.
+- Very short segments skip model analysis using `AI_MIN_WORDS_FOR_ANALYSIS`.
 
 ## HIPAA Notes
 
@@ -123,3 +132,4 @@ Current controls include:
 - Compliance-safe coding prompt policy
 
 Production HIPAA readiness still requires BAAs, security hardening, and legal/compliance review.
+

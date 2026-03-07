@@ -34,6 +34,9 @@ export const createAppointment = ({
       projectedTotal: 0,
       payerMultiplier: 1,
     },
+    analysisState: {
+      lastAiRunAt: 0,
+    },
     recordings: [],
   };
   appointments.set(id, appointment);

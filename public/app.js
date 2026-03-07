@@ -8,6 +8,10 @@ const state = {
   encounterActive: false,
   lastTranscriptNormalized: "",
   lastTranscriptAt: 0,
+  lastServerTranscriptCount: 0,
+  interimTranscriptNode: null,
+  lastAssistantMessage: "",
+  lastThrottleLogAt: 0,
 };
 
 const ui = {
@@ -55,12 +59,7 @@ const clearEmpty = (container) => {
   if (empty) empty.remove();
 };
 
-const addTranscriptLine = (source, cleanedText, rawText, quality) => {
-  clearEmpty(ui.transcriptFeed);
-
-  const line = document.createElement("div");
-  line.className = "tx-line provider";
-
+const formatTranscriptLineHtml = ({ source, cleanedText, rawText, quality, pending, errorText }) => {
   const cleaned = String(cleanedText || "").trim();
   const raw = String(rawText || "").trim();
   const corrected = cleaned && raw && cleaned.toLowerCase() !== raw.toLowerCase();
@@ -76,16 +75,87 @@ const addTranscriptLine = (source, cleanedText, rawText, quality) => {
     html += `<div class="speaker">quality: ${confidencePct}% (${escapeHtml(quality?.method || "n/a")})</div>`;
   }
 
-  line.innerHTML = html;
+  if (pending) {
+    html += `<div class="speaker">syncing...</div>`;
+  }
+
+  if (errorText) {
+    html += `<div class="speaker">${escapeHtml(errorText)}</div>`;
+  }
+
+  return html;
+};
+
+const upsertTranscriptLine = (line, { source, cleanedText, rawText, quality, pending = false, errorText = "" }) => {
+  line.className = "tx-line provider";
+  line.innerHTML = formatTranscriptLineHtml({
+    source,
+    cleanedText,
+    rawText,
+    quality,
+    pending,
+    errorText,
+  });
+};
+
+const addTranscriptLine = (
+  source,
+  cleanedText,
+  rawText,
+  quality,
+  { pending = false, errorText = "" } = {}
+) => {
+  clearEmpty(ui.transcriptFeed);
+  const line = document.createElement("div");
+  upsertTranscriptLine(line, { source, cleanedText, rawText, quality, pending, errorText });
   ui.transcriptFeed.prepend(line);
+  return line;
+};
+
+const clearInterimTranscript = () => {
+  if (state.interimTranscriptNode) {
+    state.interimTranscriptNode.remove();
+    state.interimTranscriptNode = null;
+  }
+};
+
+const setInterimTranscript = (source, text) => {
+  const trimmed = String(text || "").trim();
+  if (!trimmed) {
+    clearInterimTranscript();
+    return;
+  }
+
+  if (!state.interimTranscriptNode) {
+    state.interimTranscriptNode = addTranscriptLine(
+      source,
+      trimmed,
+      trimmed,
+      { confidence: 0.4, method: "interim" },
+      { pending: true }
+    );
+    return;
+  }
+
+  upsertTranscriptLine(state.interimTranscriptNode, {
+    source,
+    cleanedText: trimmed,
+    rawText: trimmed,
+    quality: { confidence: 0.4, method: "interim" },
+    pending: true,
+  });
 };
 
 const addAssistantMessage = (text) => {
+  const cleaned = String(text || "").trim();
+  if (!cleaned || cleaned === state.lastAssistantMessage) return;
+
   clearEmpty(ui.chatFeed);
   const message = document.createElement("div");
   message.className = "chat-msg assistant";
-  message.textContent = text;
+  message.textContent = cleaned;
   ui.chatFeed.prepend(message);
+  state.lastAssistantMessage = cleaned;
 };
 
 const renderSuggestions = (suggestions) => {
@@ -149,7 +219,10 @@ const refreshComplianceStatus = async () => {
     renderComplianceItem("OpenAI Analysis", status.integrations?.openAiAnalysisConfigured)
   );
   ui.compliancePanel.appendChild(
-    renderComplianceItem("Transcript Cleanup", status.integrations?.transcriptCleanupConfigured)
+    renderComplianceItem("Transcript Cleanup (Deterministic)", status.integrations?.transcriptCleanupConfigured)
+  );
+  ui.compliancePanel.appendChild(
+    renderComplianceItem("Transcript Cleanup (AI)", status.integrations?.transcriptCleanupAiEnabled)
   );
   ui.compliancePanel.appendChild(
     renderComplianceItem("Azure Speech", status.integrations?.azureSpeechConfigured)
@@ -184,12 +257,12 @@ const summarizeAssistantUpdate = (suggestions, guidanceItems, model) => {
   const prefix = model ? `AI analysis (${model})` : "Assistant";
   const codePart = suggestions.length
     ? `Codes: ${suggestions.slice(0, 3).map((s) => `${s.code}: ${s.rationale || "supported"}`).join(" | ")}`
-    : "Codes: koi naya compliant code detect nahi hua.";
+    : "Codes: no new compliant code detected.";
 
   const guidanceText = formatGuidanceText(guidanceItems);
   const guidancePart = guidanceText
     ? `Doctor next prompts: ${guidanceText}`
-    : "Doctor next prompts: encounter context gather karte raho (duration, severity, plan).";
+    : "Doctor next prompts: continue collecting encounter details (duration, severity, and plan).";
 
   return `${prefix}: ${codePart} ${guidancePart}`;
 };
@@ -202,18 +275,30 @@ const submitTranscriptSegment = async (text, source) => {
     body: JSON.stringify({ segment: text, source }),
   });
 
-  renderSuggestions(payload.allSuggestions || []);
-  renderRevenueTracker(payload.revenueTracker || {});
-  addAssistantMessage(
-    summarizeAssistantUpdate(
-      payload.newlyAddedSuggestions || [],
-      payload.guidance?.items || [],
-      payload.analysis?.model
-    )
-  );
+  const transcriptCount = Number(payload.transcriptCount || 0);
+  const isNewest = transcriptCount >= state.lastServerTranscriptCount;
 
-  if (payload.analysis?.mode === "rule-engine+openai") {
-    addLog(`Analyzed by ${payload.analysis.model || "OpenAI"}`, "good");
+  if (isNewest) {
+    state.lastServerTranscriptCount = transcriptCount;
+    renderSuggestions(payload.allSuggestions || []);
+    renderRevenueTracker(payload.revenueTracker || {});
+    addAssistantMessage(
+      summarizeAssistantUpdate(
+        payload.newlyAddedSuggestions || [],
+        payload.guidance?.items || [],
+        payload.analysis?.model
+      )
+    );
+
+    if (payload.analysis?.mode === "rule-engine+openai") {
+      addLog(`Analyzed by ${payload.analysis.model || "OpenAI"}`, "good");
+    } else if (payload.analysis?.mode === "rule-engine-throttled") {
+      const now = Date.now();
+      if (now - state.lastThrottleLogAt > 15000) {
+        addLog("AI analysis throttled for faster live transcript updates.", "info");
+        state.lastThrottleLogAt = now;
+      }
+    }
   }
 
   return payload;
@@ -236,33 +321,60 @@ const shouldSkipDuplicateSegment = (text) => {
   return false;
 };
 
-const handleTranscriptSegment = async (text, source) => {
+const syncTranscriptSubmission = async ({ text, source, transcriptLine }) => {
+  try {
+    const payload = await submitTranscriptSegment(text, source);
+    if (!payload) return;
+
+    const processed = payload.processedSegment || {
+      source,
+      rawText: text,
+      cleanedText: text,
+      quality: { confidence: 0.5, method: "fallback" },
+    };
+
+    upsertTranscriptLine(transcriptLine, {
+      source: processed.source || source,
+      cleanedText: processed.cleanedText || text,
+      rawText: processed.rawText || text,
+      quality: processed.quality || null,
+      pending: false,
+    });
+
+    const raw = String(processed.rawText || "").trim().toLowerCase();
+    const cleaned = String(processed.cleanedText || "").trim().toLowerCase();
+    if (raw && cleaned && raw !== cleaned) {
+      addLog("Transcript auto-cleanup applied for noisy ASR text.", "good");
+    }
+  } catch (error) {
+    upsertTranscriptLine(transcriptLine, {
+      source,
+      cleanedText: text,
+      rawText: text,
+      quality: { confidence: 0.3, method: "sync-error" },
+      pending: false,
+      errorText: `sync failed: ${error.message}`,
+    });
+    addLog(`Transcript submission failed: ${error.message}`, "warn");
+  }
+};
+
+const handleTranscriptSegment = (text, source) => {
   if (shouldSkipDuplicateSegment(text)) {
     return;
   }
 
-  const payload = await submitTranscriptSegment(text, source);
-  if (!payload) return;
+  clearInterimTranscript();
 
-  const processed = payload.processedSegment || {
+  const transcriptLine = addTranscriptLine(
     source,
-    rawText: text,
-    cleanedText: text,
-    quality: { confidence: 0.5, method: "fallback" },
-  };
-
-  addTranscriptLine(
-    processed.source || source,
-    processed.cleanedText || text,
-    processed.rawText || text,
-    processed.quality || null
+    text,
+    text,
+    { confidence: 0.45, method: "live-local" },
+    { pending: true }
   );
 
-  const raw = String(processed.rawText || "").trim().toLowerCase();
-  const cleaned = String(processed.cleanedText || "").trim().toLowerCase();
-  if (raw && cleaned && raw !== cleaned) {
-    addLog("Transcript auto-cleanup applied for noisy ASR text.", "good");
-  }
+  syncTranscriptSubmission({ text, source, transcriptLine });
 };
 
 const startAzureSpeech = async () => {
@@ -271,7 +383,7 @@ const startAzureSpeech = async () => {
   try {
     const tokenData = await api("/api/azure/speech-token");
     if (!tokenData.configured || !tokenData.token || !tokenData.region) {
-      addLog("Azure Speech not configured, browser fallback use hoga.", "warn");
+      addLog("Azure Speech not configured; using browser fallback.", "warn");
       return false;
     }
 
@@ -283,13 +395,21 @@ const startAzureSpeech = async () => {
     const audioConfig = window.SpeechSDK.AudioConfig.fromDefaultMicrophoneInput();
     const recognizer = new window.SpeechSDK.SpeechRecognizer(speechConfig, audioConfig);
 
+    recognizer.recognizing = (_sender, event) => {
+      if (event.result.reason === window.SpeechSDK.ResultReason.RecognizingSpeech) {
+        const partial = event.result.text?.trim();
+        if (partial) {
+          setInterimTranscript("azure-live", partial);
+        }
+      }
+    };
+
     recognizer.recognized = (_sender, event) => {
       if (event.result.reason === window.SpeechSDK.ResultReason.RecognizedSpeech) {
         const text = event.result.text?.trim();
         if (text) {
-          handleTranscriptSegment(text, "azure-live").catch((error) =>
-            addLog(`Transcript submission failed: ${error.message}`, "warn")
-          );
+          clearInterimTranscript();
+          handleTranscriptSegment(text, "azure-live");
         }
       }
     };
@@ -317,21 +437,28 @@ const startBrowserSpeechFallback = () => {
 
   const recognizer = new SpeechRecognition();
   recognizer.continuous = true;
-  recognizer.interimResults = false;
+  recognizer.interimResults = true;
   recognizer.maxAlternatives = 1;
   recognizer.lang = "en-US";
 
   recognizer.onresult = (event) => {
+    let interimText = "";
+
     for (let i = event.resultIndex; i < event.results.length; i += 1) {
       const result = event.results[i];
+      const text = result[0]?.transcript?.trim();
+      if (!text) continue;
+
       if (result.isFinal) {
-        const text = result[0]?.transcript?.trim();
-        if (text) {
-          handleTranscriptSegment(text, "browser-fallback").catch((error) =>
-            addLog(`Fallback transcript failed: ${error.message}`, "warn")
-          );
-        }
+        clearInterimTranscript();
+        handleTranscriptSegment(text, "browser-fallback");
+      } else {
+        interimText += `${text} `;
       }
+    }
+
+    if (interimText.trim()) {
+      setInterimTranscript("browser-fallback", interimText.trim());
     }
   };
 
@@ -435,6 +562,10 @@ const startEncounter = async () => {
   state.encounterActive = true;
   state.lastTranscriptNormalized = "";
   state.lastTranscriptAt = 0;
+  state.lastServerTranscriptCount = 0;
+  state.lastAssistantMessage = "";
+  state.lastThrottleLogAt = 0;
+  clearInterimTranscript();
 
   addLog(`Doctor ${doctorRef} started appointment ${state.appointment.id}.`, "good");
   ui.sessionBadge.textContent = `Live: ${state.appointment.id}`;
@@ -453,6 +584,7 @@ const startEncounter = async () => {
 const stopEncounter = async () => {
   ui.stopBtn.disabled = true;
   state.encounterActive = false;
+  clearInterimTranscript();
 
   if (state.speechRecognizer) {
     state.speechRecognizer.stopContinuousRecognitionAsync(
@@ -495,3 +627,5 @@ ui.stopBtn.addEventListener("click", () => {
 });
 
 refreshComplianceStatus().catch((error) => addLog(`Compliance status error: ${error.message}`, "warn"));
+
+

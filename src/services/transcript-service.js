@@ -134,7 +134,32 @@ const aiCleanupTranscript = async (text) => {
 export const normalizeTranscriptSegment = async ({ rawText, source }) => {
   const base = sanitizeDeterministic(rawText);
 
-  if (!env.openAiApiKey || !base.cleanedText) {
+  if (!base.cleanedText) {
+    return {
+      rawText: String(rawText || "").trim(),
+      cleanedText: "",
+      quality: {
+        method: base.method,
+        confidence: 0,
+        replacements: base.replacements,
+      },
+    };
+  }
+
+  // Fast path by default: deterministic cleanup only.
+  if (!env.enableAiTranscriptCleanup) {
+    return {
+      rawText: String(rawText || "").trim(),
+      cleanedText: base.cleanedText,
+      quality: {
+        method: base.method,
+        confidence: base.confidence,
+        replacements: base.replacements,
+      },
+    };
+  }
+
+  if (!env.openAiApiKey) {
     return {
       rawText: String(rawText || "").trim(),
       cleanedText: base.cleanedText,
@@ -147,7 +172,8 @@ export const normalizeTranscriptSegment = async ({ rawText, source }) => {
   }
 
   const shouldUseAiCleanup = String(source || "").includes("browser-fallback");
-  if (!shouldUseAiCleanup) {
+  const wordCount = base.cleanedText.split(/\s+/).filter(Boolean).length;
+  if (!shouldUseAiCleanup || wordCount < 7) {
     return {
       rawText: String(rawText || "").trim(),
       cleanedText: base.cleanedText,
