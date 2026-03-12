@@ -22,6 +22,7 @@ const ui = {
   insurancePlan: document.getElementById("insurancePlan"),
   visitType: document.getElementById("visitType"),
   consentGiven: document.getElementById("consentGiven"),
+  consentBadge: document.getElementById("consentBadge"),
   startBtn: document.getElementById("startBtn"),
   stopBtn: document.getElementById("stopBtn"),
   transcriptFeed: document.getElementById("transcriptFeed"),
@@ -31,11 +32,20 @@ const ui = {
   opportunityRevenue: document.getElementById("opportunityRevenue"),
   earnedNowRevenue: document.getElementById("earnedNowRevenue"),
   projectedRevenue: document.getElementById("projectedRevenue"),
+  oppChange: document.getElementById("oppChange"),
+  earnedChange: document.getElementById("earnedChange"),
   payerMultiplier: document.getElementById("payerMultiplier"),
+  multiplierDesc: document.getElementById("multiplierDesc"),
   guidanceList: document.getElementById("guidanceList"),
   billableCodesList: document.getElementById("billableCodesList"),
+  billableCount: document.getElementById("billableCount"),
+  cptBadge: document.getElementById("cptBadge"),
+  txBadge: document.getElementById("txBadge"),
+  guidanceBadge: document.getElementById("guidanceBadge"),
   eventLog: document.getElementById("eventLog"),
   sessionBadge: document.getElementById("sessionBadge"),
+  sessionStatus: document.getElementById("sessionStatus"),
+  sessionText: document.getElementById("sessionText"),
   waveform: document.getElementById("waveform"),
 };
 
@@ -55,6 +65,7 @@ const addLog = (line, level = "info") => {
     fn(line);
     return;
   }
+
   const at = new Date().toLocaleTimeString();
   const node = document.createElement("div");
   node.className = `log-entry ${level}`;
@@ -62,41 +73,95 @@ const addLog = (line, level = "info") => {
   ui.eventLog.prepend(node);
 };
 
-const clearEmpty = (container) => {
-  const empty = container.querySelector(".empty");
-  if (empty) empty.remove();
+const removeEmptyStates = (container) => {
+  if (!container) return;
+  container.querySelectorAll(".empty, .empty-state").forEach((node) => node.remove());
 };
 
-const formatTranscriptLineHtml = ({ source, cleanedText, rawText, quality, pending, errorText }) => {
+const emptyStateHtml = (text) =>
+  `<div class="empty-state empty"><p>${escapeHtml(text)}</p></div>`;
+
+const parsePriority = (priority) => {
+  const normalized = String(priority || "").toLowerCase();
+  if (normalized === "high") return "CLINICAL PRIORITY";
+  if (normalized === "low") return "FOLLOW-UP";
+  return "DOCTOR PROMPT";
+};
+
+const setConsentBadgeState = () => {
+  if (!ui.consentBadge || !ui.consentGiven) return;
+  if (ui.consentGiven.checked) {
+    ui.consentBadge.textContent = "Signed";
+    ui.consentBadge.classList.add("signed");
+    return;
+  }
+  ui.consentBadge.textContent = "Required";
+  ui.consentBadge.classList.remove("signed");
+};
+
+const setTranscriptBadge = (text, active = false) => {
+  if (!ui.txBadge) return;
+  ui.txBadge.textContent = text;
+  ui.txBadge.classList.toggle("active", Boolean(active));
+};
+
+const setSessionUiState = ({ active, text }) => {
+  if (ui.sessionBadge) {
+    ui.sessionBadge.textContent = text;
+    ui.sessionBadge.classList.toggle("active", Boolean(active));
+  }
+
+  if (ui.sessionText) {
+    ui.sessionText.textContent = text;
+  }
+
+  if (ui.sessionStatus) {
+    ui.sessionStatus.classList.toggle("live", Boolean(active));
+  }
+};
+
+const closeSuggestionStream = () => {
+  if (!state.suggestionStream) return;
+  state.suggestionStream.close();
+  state.suggestionStream = null;
+};
+
+const transcriptLineHtml = ({ source, cleanedText, rawText, quality, pending = false, errorText = "" }) => {
   const cleaned = String(cleanedText || "").trim();
   const raw = String(rawText || "").trim();
-  const corrected = cleaned && raw && cleaned.toLowerCase() !== raw.toLowerCase();
   const confidencePct = Math.round((Number(quality?.confidence || 0) || 0) * 100);
 
-  let html = `<div class="speaker">${escapeHtml(source)}</div>${escapeHtml(cleaned || raw)}`;
-
-  if (corrected) {
-    html += `<div class="speaker">cleaned from: ${escapeHtml(raw)}</div>`;
+  const details = [];
+  if (raw && cleaned && raw.toLowerCase() !== cleaned.toLowerCase()) {
+    details.push(`Cleaned from: ${raw}`);
   }
-
-  if (Number.isFinite(confidencePct) && confidencePct > 0) {
-    html += `<div class="speaker">quality: ${confidencePct}% (${escapeHtml(quality?.method || "n/a")})</div>`;
+  if (confidencePct > 0) {
+    details.push(`Quality: ${confidencePct}% (${quality?.method || "n/a"})`);
   }
-
   if (pending) {
-    html += `<div class="speaker">syncing...</div>`;
+    details.push("Syncing...");
   }
-
   if (errorText) {
-    html += `<div class="speaker">${escapeHtml(errorText)}</div>`;
+    details.push(errorText);
   }
 
-  return html;
+  const detailHtml = details
+    .map((line) => `<div class="tx-text" style="font-size:11px;color:#94a3b8">${escapeHtml(line)}</div>`)
+    .join("");
+
+  return `
+    <div class="tx-speaker">${escapeHtml(source)}</div>
+    <div class="tx-text">${escapeHtml(cleaned || raw)}</div>
+    ${detailHtml}
+  `;
 };
 
-const upsertTranscriptLine = (line, { source, cleanedText, rawText, quality, pending = false, errorText = "" }) => {
+const upsertTranscriptLine = (
+  line,
+  { source, cleanedText, rawText, quality, pending = false, errorText = "" }
+) => {
   line.className = "tx-line provider";
-  line.innerHTML = formatTranscriptLineHtml({
+  line.innerHTML = transcriptLineHtml({
     source,
     cleanedText,
     rawText,
@@ -113,7 +178,7 @@ const addTranscriptLine = (
   quality,
   { pending = false, errorText = "" } = {}
 ) => {
-  clearEmpty(ui.transcriptFeed);
+  removeEmptyStates(ui.transcriptFeed);
   const line = document.createElement("div");
   upsertTranscriptLine(line, { source, cleanedText, rawText, quality, pending, errorText });
   ui.transcriptFeed.prepend(line);
@@ -121,10 +186,9 @@ const addTranscriptLine = (
 };
 
 const clearInterimTranscript = () => {
-  if (state.interimTranscriptNode) {
-    state.interimTranscriptNode.remove();
-    state.interimTranscriptNode = null;
-  }
+  if (!state.interimTranscriptNode) return;
+  state.interimTranscriptNode.remove();
+  state.interimTranscriptNode = null;
 };
 
 const setInterimTranscript = (source, text) => {
@@ -158,95 +222,113 @@ const addAssistantMessage = (text) => {
   const cleaned = String(text || "").trim();
   if (!cleaned || cleaned === state.lastAssistantMessage) return;
 
-  clearEmpty(ui.chatFeed);
+  removeEmptyStates(ui.chatFeed);
   const message = document.createElement("div");
-  message.className = "chat-msg assistant";
+  message.className = "chat-bubble assistant";
   message.textContent = cleaned;
   ui.chatFeed.prepend(message);
   state.lastAssistantMessage = cleaned;
 };
 
-const closeSuggestionStream = () => {
-  if (state.suggestionStream) {
-    state.suggestionStream.close();
-    state.suggestionStream = null;
-  }
-};
-
 const renderSuggestions = (suggestions) => {
   ui.suggestionList.innerHTML = "";
-  if (!suggestions.length) {
-    ui.suggestionList.innerHTML = '<div class="empty">No compliant suggestions yet.</div>';
+  if (!Array.isArray(suggestions) || suggestions.length === 0) {
+    ui.suggestionList.innerHTML = emptyStateHtml("No compliant suggestions yet.");
+    if (ui.cptBadge) ui.cptBadge.textContent = "0 codes";
     return;
+  }
+
+  if (ui.cptBadge) {
+    const count = suggestions.length;
+    ui.cptBadge.textContent = `${count} code${count === 1 ? "" : "s"}`;
   }
 
   for (const item of suggestions) {
     const card = document.createElement("div");
     card.className = "cpt-card";
     const confidence = Math.max(0, Math.min(100, Math.round((item.confidence || 0) * 100)));
+    const amount = item.estimatedAmount ? `+$${safeNumber(item.estimatedAmount)}` : `${confidence}%`;
     card.innerHTML = `
-      <div class="cpt-top">
+      <div class="cpt-card-top">
         <div class="cpt-code">${escapeHtml(item.code)}</div>
-        <div class="cpt-amount">${confidence}%</div>
+        <div class="cpt-amount">${amount}</div>
       </div>
       <div class="cpt-desc"><strong>${escapeHtml(item.title || "CPT/HCPCS suggestion")}</strong></div>
       <div class="cpt-desc">${escapeHtml(item.rationale || "No rationale.")}</div>
       <div class="cpt-desc">Doc: ${escapeHtml(item.documentationNeeded || "Document medical necessity.")}</div>
-      <div class="cpt-confidence"><div class="cpt-confidence-fill" style="width:${confidence}%"></div></div>
+      <div class="cpt-confidence-bar">
+        <div class="cpt-confidence-fill" style="width:${confidence}%"></div>
+      </div>
+      <div class="cpt-confidence-label"><span>Confidence</span><span>${confidence}%</span></div>
     `;
     ui.suggestionList.appendChild(card);
   }
 };
 
 const renderRevenueTracker = (tracker) => {
-  ui.baselineRevenue.textContent = `$${safeNumber(tracker?.baseline)}`;
-  ui.opportunityRevenue.textContent = `$${safeNumber(tracker?.compliantOpportunity)}`;
-  ui.earnedNowRevenue.textContent = `$${safeNumber(tracker?.earnedNow ?? tracker?.projectedTotal)}`;
-  ui.projectedRevenue.textContent = `$${safeNumber(tracker?.projectedTotal)}`;
-  ui.payerMultiplier.textContent = `x${safeNumber(tracker?.payerMultiplier)}`;
+  const baseline = Number(tracker?.baseline || 0);
+  const opportunity = Number(tracker?.compliantOpportunity || 0);
+  const earnedNow = Number(tracker?.earnedNow ?? tracker?.projectedTotal ?? 0);
+  const projected = Number(tracker?.projectedTotal || 0);
+  const payerMultiplier = Number(tracker?.payerMultiplier || 1);
+
+  ui.baselineRevenue.textContent = `$${safeNumber(baseline)}`;
+  ui.opportunityRevenue.textContent = `$${safeNumber(opportunity)}`;
+  ui.earnedNowRevenue.textContent = `$${safeNumber(earnedNow)}`;
+  ui.projectedRevenue.textContent = `$${safeNumber(projected)}`;
+  ui.payerMultiplier.textContent = `x${safeNumber(payerMultiplier)}`;
+
+  if (ui.oppChange) {
+    ui.oppChange.textContent =
+      opportunity > 0 ? `+${safeNumber(opportunity)} compliant opportunity` : "No added opportunity yet";
+  }
+
+  if (ui.earnedChange) {
+    const codeCount = Array.isArray(tracker?.billableCodes) ? tracker.billableCodes.length : 0;
+    ui.earnedChange.textContent = `${codeCount} billable code${codeCount === 1 ? "" : "s"} selected`;
+  }
 };
 
 const renderGuidance = (guidanceItems) => {
-  if (!ui.guidanceList) return;
-
   ui.guidanceList.innerHTML = "";
   if (!Array.isArray(guidanceItems) || guidanceItems.length === 0) {
-    ui.guidanceList.innerHTML = '<div class="empty">No targeted prompts yet.</div>';
+    ui.guidanceList.innerHTML = emptyStateHtml("No targeted prompts yet.");
     return;
   }
 
-  for (const item of guidanceItems.slice(0, 5)) {
+  for (const item of guidanceItems.slice(0, 6)) {
     const row = document.createElement("div");
     row.className = "guidance-item";
-    const priority = String(item.priority || "medium").toUpperCase();
     row.innerHTML = `
-      <div class="guidance-priority">${escapeHtml(priority)}</div>
-      <div>${escapeHtml(item.prompt || "")}</div>
+      <div class="guidance-tag">${escapeHtml(parsePriority(item.priority))}</div>
+      <div class="guidance-text">${escapeHtml(item.prompt || "")}</div>
     `;
     ui.guidanceList.appendChild(row);
   }
 };
 
 const renderBillableCodes = (codes) => {
-  if (!ui.billableCodesList) return;
-
   ui.billableCodesList.innerHTML = "";
   if (!Array.isArray(codes) || codes.length === 0) {
-    ui.billableCodesList.innerHTML = '<div class="empty">No billable codes detected yet.</div>';
+    ui.billableCodesList.innerHTML = emptyStateHtml("No billable codes detected yet.");
+    if (ui.billableCount) ui.billableCount.textContent = "0 items";
     return;
+  }
+
+  if (ui.billableCount) {
+    ui.billableCount.textContent = `${codes.length} item${codes.length === 1 ? "" : "s"}`;
   }
 
   for (const code of codes) {
     const row = document.createElement("div");
-    row.className = "billable-code-item";
-    const kind = String(code.type || "").replaceAll("-", " ");
+    row.className = "table-row";
+    const confidence = Number(code.confidence || 0);
+    const status = confidence >= 0.8 ? "confirmed" : "pending";
     row.innerHTML = `
-      <div class="cpt-top">
-        <div class="cpt-code">${escapeHtml(code.code)}</div>
-        <div class="cpt-amount">$${safeNumber(code.estimatedAmount)}</div>
-      </div>
-      <div class="cpt-desc"><strong>${escapeHtml(code.title || "")}</strong></div>
-      <div class="cpt-desc">Type: ${escapeHtml(kind)} | Source: ${escapeHtml(code.source || "transcript")}</div>
+      <div class="table-code">${escapeHtml(code.code)}</div>
+      <div class="table-desc">${escapeHtml(code.title || "")}</div>
+      <div class="table-amount">$${safeNumber(code.estimatedAmount)}</div>
+      <div><span class="status-tag ${status}">${status.charAt(0).toUpperCase() + status.slice(1)}</span></div>
     `;
     ui.billableCodesList.appendChild(row);
   }
@@ -271,17 +353,26 @@ const formatGuidanceText = (guidanceItems) => {
   if (!Array.isArray(guidanceItems) || guidanceItems.length === 0) {
     return "";
   }
-
   return guidanceItems
     .slice(0, 3)
     .map((item, index) => `${index + 1}. ${item.prompt}`)
     .join(" | ");
 };
 
-const summarizeAssistantUpdate = (suggestions, guidanceItems, model, tracker, missedBillables = []) => {
+const summarizeAssistantUpdate = ({
+  suggestions = [],
+  guidanceItems = [],
+  model,
+  tracker,
+  missedBillables = [],
+  documentationGaps = [],
+}) => {
   const prefix = model ? `AI analysis (${model})` : "Assistant";
   const codePart = suggestions.length
-    ? `Codes: ${suggestions.slice(0, 3).map((s) => `${s.code}: ${s.rationale || "supported"}`).join(" | ")}`
+    ? `Codes: ${suggestions
+        .slice(0, 3)
+        .map((s) => `${s.code}: ${s.rationale || "supported"}`)
+        .join(" | ")}`
     : "Codes: no new compliant code detected.";
 
   const guidanceText = formatGuidanceText(guidanceItems);
@@ -289,12 +380,22 @@ const summarizeAssistantUpdate = (suggestions, guidanceItems, model, tracker, mi
     ? `Doctor next prompts: ${guidanceText}`
     : "Doctor next prompts: continue collecting encounter details (duration, severity, and plan).";
 
-  const revenuePart = `Estimated earned now: $${safeNumber(tracker?.earnedNow ?? tracker?.projectedTotal)}`;
   const missedPart = missedBillables.length
-    ? `Missed billables to verify: ${missedBillables.slice(0, 2).map((item) => item.potentialCode).join(", ")}`
+    ? `Missed billables: ${missedBillables
+        .slice(0, 2)
+        .map((item) => item.potentialCode)
+        .join(", ")}`
     : "Missed billables: none flagged.";
 
-  return `${prefix}: ${codePart} ${guidancePart} ${missedPart} ${revenuePart}`;
+  const gapPart = documentationGaps.length
+    ? `Documentation gaps: ${documentationGaps.length}`
+    : "Documentation gaps: none major.";
+
+  const revenuePart = `Estimated earned now: $${safeNumber(
+    tracker?.earnedNow ?? tracker?.projectedTotal
+  )}`;
+
+  return `${prefix}: ${codePart} ${guidancePart} ${missedPart} ${gapPart} ${revenuePart}`;
 };
 
 const applyAnalysisPayload = (payload) => {
@@ -311,13 +412,14 @@ const applyAnalysisPayload = (payload) => {
   renderBillableCodes(payload.revenueTracker?.billableCodes || []);
 
   addAssistantMessage(
-    summarizeAssistantUpdate(
-      payload.newlyAddedSuggestions || [],
-      payload.guidance?.items || [],
-      payload.analysis?.model,
-      payload.revenueTracker,
-      payload.missedBillables || []
-    )
+    summarizeAssistantUpdate({
+      suggestions: payload.newlyAddedSuggestions || [],
+      guidanceItems: payload.guidance?.items || [],
+      model: payload.analysis?.model,
+      tracker: payload.revenueTracker,
+      missedBillables: payload.missedBillables || [],
+      documentationGaps: payload.documentation?.gaps || [],
+    })
   );
 
   if (payload.analysis?.mode === "rule-engine+openai") {
@@ -339,7 +441,6 @@ const submitTranscriptSegment = async (text, source) => {
     body: JSON.stringify({ segment: text, source }),
   });
   applyAnalysisPayload(payload);
-
   return payload;
 };
 
@@ -372,10 +473,7 @@ const shouldSkipDuplicateSegment = (text) => {
   const now = Date.now();
   const isDuplicate =
     normalized === state.lastTranscriptNormalized && now - state.lastTranscriptAt < 7000;
-
-  if (isDuplicate) {
-    return true;
-  }
+  if (isDuplicate) return true;
 
   state.lastTranscriptNormalized = normalized;
   state.lastTranscriptAt = now;
@@ -421,10 +519,7 @@ const syncTranscriptSubmission = async ({ text, source, transcriptLine }) => {
 };
 
 const handleTranscriptSegment = (text, source) => {
-  if (shouldSkipDuplicateSegment(text)) {
-    return;
-  }
-
+  if (shouldSkipDuplicateSegment(text)) return;
   clearInterimTranscript();
 
   const transcriptLine = addTranscriptLine(
@@ -434,7 +529,6 @@ const handleTranscriptSegment = (text, source) => {
     { confidence: 0.45, method: "live-local" },
     { pending: true }
   );
-
   syncTranscriptSubmission({ text, source, transcriptLine });
 };
 
@@ -459,9 +553,7 @@ const startAzureSpeech = async () => {
     recognizer.recognizing = (_sender, event) => {
       if (event.result.reason === window.SpeechSDK.ResultReason.RecognizingSpeech) {
         const partial = event.result.text?.trim();
-        if (partial) {
-          setInterimTranscript("azure-live", partial);
-        }
+        if (partial) setInterimTranscript("azure-live", partial);
       }
     };
 
@@ -525,12 +617,11 @@ const startBrowserSpeechFallback = () => {
 
   recognizer.onerror = (event) => addLog(`Speech fallback error: ${event.error}`, "warn");
   recognizer.onend = () => {
-    if (state.encounterActive) {
-      try {
-        recognizer.start();
-      } catch {
-        addLog("Browser fallback recognizer restart failed.", "warn");
-      }
+    if (!state.encounterActive) return;
+    try {
+      recognizer.start();
+    } catch {
+      addLog("Browser fallback recognizer restart failed.", "warn");
     }
   };
 
@@ -554,6 +645,7 @@ const startRecording = () => {
   recorder.start(1000);
   state.mediaRecorder = recorder;
   ui.waveform?.classList.add("active");
+  setTranscriptBadge("Recording", true);
   addLog("Encounter recording started.", "good");
 };
 
@@ -584,6 +676,17 @@ const stopRecordingAndUpload = async () => {
   addLog(`Recording uploaded to ${uploaded.recording.provider}.`, "good");
 };
 
+const resetEncounterPanels = () => {
+  ui.transcriptFeed.innerHTML = emptyStateHtml("Transcript appears here during encounter");
+  ui.chatFeed.innerHTML = emptyStateHtml("Assistant analysis will appear here");
+  ui.guidanceList.innerHTML = emptyStateHtml("Real-time prompts will appear here");
+  ui.suggestionList.innerHTML = emptyStateHtml("CPT codes surface as encounter progresses");
+  ui.billableCodesList.innerHTML = emptyStateHtml("No codes logged yet");
+
+  if (ui.cptBadge) ui.cptBadge.textContent = "0 codes";
+  if (ui.billableCount) ui.billableCount.textContent = "0 items";
+};
+
 const startEncounter = async () => {
   if (!ui.consentGiven.checked) {
     alert("Intake consent form must be signed before recording.");
@@ -593,8 +696,6 @@ const startEncounter = async () => {
   const doctorRef = ui.doctorRef.value.trim();
   const patientRef = ui.patientRef.value.trim() || "anonymous";
   const consentFormId = ui.consentFormId.value.trim();
-  const insurancePlan = ui.insurancePlan.value;
-  const visitType = ui.visitType.value;
 
   if (!doctorRef) {
     alert("Doctor reference is required.");
@@ -613,8 +714,8 @@ const startEncounter = async () => {
       patientRef,
       consentFormId,
       consentSignedAt: new Date().toISOString(),
-      insurancePlan,
-      visitType,
+      insurancePlan: ui.insurancePlan.value,
+      visitType: ui.visitType.value,
       consentGiven: true,
     }),
   });
@@ -628,23 +729,30 @@ const startEncounter = async () => {
   state.lastThrottleLogAt = 0;
   clearInterimTranscript();
 
-  ui.transcriptFeed.innerHTML = '<div class="empty">Transcript will appear here during encounter</div>';
-  ui.chatFeed.innerHTML = '<div class="empty">Assistant analysis updates will appear here</div>';
-  renderSuggestions([]);
-  renderGuidance([]);
-  renderBillableCodes([]);
-  renderRevenueTracker({ baseline: 0, compliantOpportunity: 0, earnedNow: 0, projectedTotal: 0, payerMultiplier: 1 });
+  resetEncounterPanels();
+  renderRevenueTracker({
+    baseline: 0,
+    compliantOpportunity: 0,
+    earnedNow: 0,
+    projectedTotal: 0,
+    payerMultiplier: 1,
+    billableCodes: [],
+  });
 
   addLog(`Doctor ${doctorRef} started appointment ${state.appointment.id}.`, "good");
-  ui.sessionBadge.textContent = `Live: ${state.appointment.id}`;
-  ui.sessionBadge.classList.add("active");
+  setSessionUiState({
+    active: true,
+    text: ui.sessionBadge ? `Live: ${state.appointment.id}` : "Session Live",
+  });
   startSuggestionStream();
 
   state.micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
   startRecording();
 
   const azureStarted = await startAzureSpeech();
-  if (!azureStarted) startBrowserSpeechFallback();
+  if (!azureStarted) {
+    startBrowserSpeechFallback();
+  }
 
   ui.startBtn.disabled = true;
   ui.stopBtn.disabled = false;
@@ -672,9 +780,11 @@ const stopEncounter = async () => {
 
   if (state.micStream) {
     state.micStream.getTracks().forEach((track) => track.stop());
+    state.micStream = null;
   }
 
   ui.waveform?.classList.remove("active");
+  setTranscriptBadge("Stopped", false);
 
   try {
     await stopRecordingAndUpload();
@@ -682,18 +792,24 @@ const stopEncounter = async () => {
     addLog(error.message, "warn");
   }
 
-  ui.sessionBadge.textContent = "Session Idle";
-  ui.sessionBadge.classList.remove("active");
+  setSessionUiState({
+    active: false,
+    text: ui.sessionBadge ? "Session Idle" : "Session Ended",
+  });
   ui.startBtn.disabled = false;
   addLog("Encounter ended.");
 };
 
-ui.startBtn.addEventListener("click", () => {
+ui.startBtn?.addEventListener("click", () => {
   startEncounter().catch((error) => addLog(`Start failed: ${error.message}`, "warn"));
 });
 
-ui.stopBtn.addEventListener("click", () => {
+ui.stopBtn?.addEventListener("click", () => {
   stopEncounter().catch((error) => addLog(`Stop failed: ${error.message}`, "warn"));
 });
 
+ui.consentGiven?.addEventListener("change", setConsentBadgeState);
+
+setConsentBadgeState();
+setTranscriptBadge("Idle", false);
 

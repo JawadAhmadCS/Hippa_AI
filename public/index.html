@@ -1,584 +1,1140 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Madical Assistant for Revenue Inxrease</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.google.com/specimen/Syne" rel="stylesheet" />
-    <link
-      href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=JetBrains+Mono:wght@300;400;500&display=swap"
-      rel="stylesheet"
-    />
-    <style>
-      *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Madical Assistant for Revenue Inxrease</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=IBM+Plex+Mono:wght@300;400;500&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-      :root {
-        --bg:       #f3f6fb;
-        --surface:  #ffffff;
-        --panel:    #ffffff;
-        --border:   rgba(15,23,42,0.12);
-        --border-active: rgba(37,99,235,0.25);
-        --text:     #0f172a;
-        --muted:    #64748b;
-        --dim:      #475569;
-        --accent:   #2563eb;
-        --accent2:  #0ea5e9;
-        --warn:     #dc2626;
-        --good:     #16a34a;
-        --mono:     'JetBrains Mono', monospace;
-        --display:  'Syne', sans-serif;
-      }
+    :root {
+      --bg: #f0f4f8;
+      --surface: #ffffff;
+      --surface2: #f8fafc;
+      --border: #e2e8f0;
+      --border-focus: #3b82f6;
+      --text: #0f172a;
+      --text-secondary: #475569;
+      --text-muted: #94a3b8;
+      --accent: #2563eb;
+      --accent-light: #dbeafe;
+      --accent-hover: #1d4ed8;
+      --success: #059669;
+      --success-light: #d1fae5;
+      --warning: #d97706;
+      --warning-light: #fef3c7;
+      --danger: #dc2626;
+      --shadow-sm: 0 1px 3px rgba(15,23,42,0.08), 0 1px 2px rgba(15,23,42,0.04);
+      --shadow-md: 0 4px 16px rgba(15,23,42,0.08), 0 2px 6px rgba(15,23,42,0.04);
+      --shadow-lg: 0 12px 40px rgba(15,23,42,0.1), 0 4px 12px rgba(15,23,42,0.06);
+      --radius-sm: 8px;
+      --radius-md: 12px;
+      --radius-lg: 16px;
+      --font: 'Plus Jakarta Sans', sans-serif;
+      --mono: 'IBM Plex Mono', monospace;
+    }
 
-      html { scroll-behavior: smooth; }
+    html { scroll-behavior: smooth; }
 
-      body {
-        background: var(--bg);
-        color: var(--text);
-        font-family: var(--display);
-        font-size: 14px;
-        min-height: 100vh;
-        overflow-x: hidden;
-      }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font);
+      font-size: 14px;
+      min-height: 100vh;
+      -webkit-font-smoothing: antialiased;
+    }
 
-      /* ── SCANLINE OVERLAY ── */
-      body::before { content: none; }
+    /* ── SIDEBAR ── */
+    .layout { display: flex; min-height: 100vh; }
 
-      /* ── AMBIENT GLOWS ── */
-      .glow-a, .glow-b { display: none; }
-      .glow-a { width: 600px; height: 400px; top: -150px; left: -100px; background: rgba(0,212,180,0.07); }
-      .glow-b { width: 500px; height: 500px; bottom: -200px; right: -100px; background: rgba(0,150,255,0.06); animation-delay: 4s; }
+    .sidebar {
+      width: 240px;
+      background: #0f172a;
+      display: flex;
+      flex-direction: column;
+      flex-shrink: 0;
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      overflow: hidden;
+    }
 
-      @keyframes breathe {
-        0%,100% { opacity: 0.7; transform: scale(1); }
-        50%      { opacity: 1;   transform: scale(1.1); }
-      }
+    .sidebar-logo {
+      padding: 24px 20px 20px;
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
 
-      /* ── LAYOUT ── */
-      .shell {
-        position: relative; z-index: 1;
-        max-width: 1440px; margin: 0 auto;
-        padding: 24px 28px 48px;
-        display: flex; flex-direction: column; gap: 20px;
-      }
+    .logo-icon {
+      width: 34px; height: 34px;
+      background: var(--accent);
+      border-radius: 9px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
 
-      /* ── TOPBAR ── */
-      .topbar {
-        display: flex; align-items: flex-start; justify-content: space-between;
-        padding: 28px 32px;
-        background: var(--panel);
-        border: 1px solid var(--border);
-        border-radius: 16px;
-        position: relative; overflow: hidden;
-        box-shadow: 0 12px 30px rgba(15,23,42,0.06);
-      }
-      .topbar::after {
-        content: '';
-        position: absolute; top: 0; left: 0; right: 0; height: 1px;
-        background: linear-gradient(90deg, transparent, var(--accent), transparent);
-        opacity: 0.25;
-      }
+    .logo-icon svg { color: #fff; }
 
-      .topbar-left { display: flex; flex-direction: column; gap: 6px; }
+    .logo-text {
+      display: flex;
+      flex-direction: column;
+    }
 
-      .eyebrow {
-        font-family: var(--mono); font-size: 10px; font-weight: 500;
-        letter-spacing: 0.2em; color: var(--accent);
-        display: flex; align-items: center; gap: 8px;
-      }
-      .eyebrow::before {
-        content: ''; display: inline-block; width: 6px; height: 6px;
-        border-radius: 50%; background: var(--accent);
-        box-shadow: 0 0 8px var(--accent);
-        animation: pulse-dot 2s ease-in-out infinite;
-      }
-      @keyframes pulse-dot {
-        0%,100% { box-shadow: 0 0 4px var(--accent); }
-        50%      { box-shadow: 0 0 12px var(--accent), 0 0 24px rgba(0,212,180,0.4); }
-      }
+    .logo-name {
+      font-size: 15px;
+      font-weight: 700;
+      color: #ffffff;
+      letter-spacing: -0.01em;
+    }
 
-      h1 {
-        font-size: clamp(22px, 3vw, 32px); font-weight: 800;
-        letter-spacing: -0.02em;
-        background: linear-gradient(135deg, #0f172a 20%, var(--accent) 100%);
-        -webkit-background-clip: text; -webkit-text-fill-color: transparent;
-        background-clip: text;
-      }
+    .logo-tagline {
+      font-size: 10px;
+      color: rgba(255,255,255,0.35);
+      font-family: var(--mono);
+      letter-spacing: 0.04em;
+    }
 
-      .subtitle {
-        font-family: var(--mono); font-size: 11px; color: var(--dim);
-        max-width: 580px; line-height: 1.6;
-      }
+    .sidebar-section {
+      padding: 20px 12px 8px;
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: rgba(255,255,255,0.25);
+      font-family: var(--mono);
+    }
 
-      /* SESSION BADGE */
-      .badge {
-        padding: 8px 18px;
-        border-radius: 100px;
-        font-family: var(--mono); font-size: 11px; font-weight: 500;
-        letter-spacing: 0.08em;
-        background: rgba(255,255,255,0.04);
-        border: 1px solid var(--border);
-        color: var(--dim);
-        transition: all 0.4s;
-        white-space: nowrap;
-        align-self: flex-start;
-      }
-      .badge.active {
-        background: rgba(37,99,235,0.1);
-        border-color: var(--accent);
-        color: var(--accent);
-        box-shadow: 0 0 20px rgba(37,99,235,0.18);
-      }
+    .nav-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 14px;
+      border-radius: 8px;
+      margin: 2px 8px;
+      color: rgba(255,255,255,0.5);
+      font-size: 13.5px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.15s;
+      text-decoration: none;
+    }
 
-      /* ── CONTROLS STRIP ── */
-      .controls {
-        display: flex; align-items: center; flex-wrap: wrap; gap: 14px;
-        padding: 20px 24px;
-        background: var(--panel);
-        border: 1px solid var(--border);
-        border-radius: 14px;
-        box-shadow: 0 8px 24px rgba(15,23,42,0.05);
-      }
+    .nav-item:hover { color: rgba(255,255,255,0.85); background: rgba(255,255,255,0.06); }
+    .nav-item.active { color: #ffffff; background: var(--accent); }
+    .nav-item svg { flex-shrink: 0; opacity: 0.8; }
+    .nav-item.active svg { opacity: 1; }
 
-      .field {
-        display: flex; flex-direction: column; gap: 5px;
-        flex: 1; min-width: 140px;
-      }
-      .field label {
-        font-family: var(--mono); font-size: 10px; letter-spacing: 0.12em;
-        color: var(--dim); text-transform: uppercase;
-      }
-      .field input, .field select {
-        height: 38px; padding: 0 12px;
-        background: #ffffff;
-        border: 1px solid var(--border);
-        border-radius: 8px;
-        color: var(--text);
-        font-family: var(--mono); font-size: 12px;
-        outline: none;
-        transition: border-color 0.2s, box-shadow 0.2s;
-        -webkit-appearance: none; appearance: none;
-      }
-      .field input:focus, .field select:focus {
-        border-color: var(--accent);
-        box-shadow: 0 0 0 3px rgba(37,99,235,0.12);
-      }
-      .field select { cursor: pointer; }
-      option { background: #ffffff; color: #0f172a; }
+    .sidebar-footer {
+      margin-top: auto;
+      padding: 16px 12px;
+      border-top: 1px solid rgba(255,255,255,0.06);
+    }
 
-      .consent {
-        display: flex; align-items: center; gap: 8px;
-        font-family: var(--mono); font-size: 11px; color: var(--dim);
-        cursor: pointer; white-space: nowrap;
-      }
-      .consent input[type=checkbox] {
-        width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer;
-      }
+    .doctor-pill {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 12px;
+      border-radius: 10px;
+      background: rgba(255,255,255,0.05);
+    }
 
-      /* BUTTONS */
-      .btn {
-        height: 40px; padding: 0 22px;
-        border-radius: 10px;
-        font-family: var(--display); font-size: 13px; font-weight: 600;
-        border: none; cursor: pointer;
-        transition: all 0.2s;
-        white-space: nowrap;
-      }
-      .btn.primary {
-        background: var(--accent);
-        color: #ffffff;
-        box-shadow: 0 10px 24px rgba(37,99,235,0.28);
-      }
-      .btn.primary:hover:not(:disabled) {
-        background: #1d4ed8;
-        box-shadow: 0 12px 28px rgba(37,99,235,0.35);
-        transform: translateY(-1px);
-      }
-      .btn.ghost {
-        background: transparent;
-        color: var(--dim);
-        border: 1px solid var(--border);
-      }
-      .btn.ghost:hover:not(:disabled) {
-        border-color: var(--warn);
-        color: var(--warn);
-        box-shadow: 0 0 16px rgba(255,107,53,0.15);
-      }
-      .btn:disabled { opacity: 0.35; cursor: not-allowed; }
+    .doctor-avatar {
+      width: 32px; height: 32px;
+      border-radius: 50%;
+      background: var(--accent);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 12px; font-weight: 700; color: #fff;
+      flex-shrink: 0;
+    }
 
-      .btn-row { display: flex; gap: 10px; align-items: center; }
+    .doctor-info { flex: 1; min-width: 0; }
+    .doctor-name { font-size: 12.5px; font-weight: 600; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .doctor-role { font-size: 10px; color: rgba(255,255,255,0.35); font-family: var(--mono); }
 
-      /* ── MAIN GRID ── */
-      .grid {
-        display: grid;
-        grid-template-columns: 1fr 1fr 1fr;
-        grid-template-rows: auto auto;
-        gap: 16px;
-      }
+    /* ── MAIN ── */
+    .main { flex: 1; display: flex; flex-direction: column; overflow-x: hidden; }
 
-      .panel {
-        background: var(--panel);
-        border: 1px solid var(--border);
-        border-radius: 14px;
-        display: flex; flex-direction: column;
-        overflow: hidden;
-        transition: border-color 0.3s;
-        box-shadow: 0 8px 24px rgba(15,23,42,0.05);
-      }
-      .panel:hover { border-color: rgba(15,23,42,0.2); }
+    /* ── TOPBAR ── */
+    .topbar {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 0 28px;
+      height: 60px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
 
-      .panel-head {
-        padding: 16px 20px 14px;
-        border-bottom: 1px solid var(--border);
-        display: flex; align-items: center; justify-content: space-between;
-      }
-      .panel-head h2 {
-        font-size: 11px; font-weight: 600;
-        letter-spacing: 0.14em; text-transform: uppercase;
-        color: var(--dim);
-        display: flex; align-items: center; gap: 8px;
-      }
-      .panel-head h2::before {
-        content: ''; display: inline-block;
-        width: 3px; height: 14px; border-radius: 2px;
-        background: var(--accent);
-      }
+    .topbar-left {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
 
-      .scroll-panel {
-        flex: 1; overflow-y: auto; padding: 14px 18px;
-        display: flex; flex-direction: column; gap: 8px;
-        min-height: 220px; max-height: 300px;
-        scrollbar-width: thin;
-        scrollbar-color: rgba(255,255,255,0.1) transparent;
-      }
+    .page-title {
+      font-size: 15px;
+      font-weight: 700;
+      color: var(--text);
+      letter-spacing: -0.01em;
+    }
 
-      /* Transcript */
-      #transcriptFeed { min-height: 260px; }
-      .tx-line {
-        font-family: var(--mono); font-size: 12px; line-height: 1.6;
-        color: var(--text); padding: 8px 10px;
-        background: #f8fafc;
-        border-left: 2px solid transparent;
-        border-radius: 0 6px 6px 0;
-        animation: fadeSlide 0.3s ease;
-      }
-      .tx-line.provider { border-left-color: var(--accent); }
-      .tx-line.patient  { border-left-color: var(--accent2); }
-      .tx-line .speaker {
-        font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase;
-        color: var(--muted); margin-bottom: 2px;
-      }
-      @keyframes fadeSlide {
-        from { opacity: 0; transform: translateY(6px); }
-        to   { opacity: 1; transform: translateY(0); }
-      }
+    .breadcrumb {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      color: var(--text-muted);
+      font-family: var(--mono);
+    }
 
-      /* Doctor Guidance + Chat */
-      .guidance-panel { min-height: 140px; max-height: 180px; }
-      .chat-panel { min-height: 120px; max-height: 160px; }
-      #chatFeed { min-height: 120px; }
-      .guidance-item {
-        padding: 9px 10px;
-        border-radius: 8px;
-        background: #eef6ff;
-        border: 1px solid #bfdbfe;
-        font-family: var(--mono);
-        font-size: 11px;
-        line-height: 1.5;
-      }
-      .guidance-priority {
-        font-size: 9px;
-        letter-spacing: 0.12em;
-        color: var(--accent2);
-        margin-bottom: 3px;
-      }
-      .chat-msg {
-        font-family: var(--mono); font-size: 12px; line-height: 1.6;
-        padding: 10px 12px; border-radius: 8px;
-        animation: fadeSlide 0.3s ease;
-      }
-      .chat-msg.assistant {
-        background: #eef2ff;
-        border: 1px solid #c7d2fe;
-        color: var(--text);
-      }
-      .chat-msg.user {
-        background: #f0f9ff;
-        border: 1px solid #bae6fd;
-        color: var(--dim);
-        align-self: flex-end;
-      }
+    .breadcrumb span { color: var(--text-secondary); }
 
-      /* Suggestions */
-      #suggestionList { min-height: 260px; }
-      .cpt-card {
-        padding: 12px 14px;
-        background: #f8fafc;
-        border: 1px solid var(--border);
-        border-radius: 10px;
-        animation: fadeSlide 0.3s ease;
-        transition: border-color 0.2s;
-        cursor: default;
-      }
-      .cpt-card:hover { border-color: var(--accent); }
-      .cpt-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px; }
-      .cpt-code {
-        font-family: var(--mono); font-size: 13px; font-weight: 500;
-        color: var(--accent);
-      }
-      .cpt-amount {
-        font-family: var(--mono); font-size: 13px;
-        color: var(--good);
-      }
-      .cpt-desc { font-size: 11px; color: var(--dim); line-height: 1.5; }
-      .cpt-confidence {
-        margin-top: 6px; height: 2px; border-radius: 1px;
-        background: rgba(15,23,42,0.1);
-        overflow: hidden;
-      }
-      .cpt-confidence-fill {
-        height: 100%; border-radius: 1px;
-        background: linear-gradient(90deg, var(--accent2), var(--accent));
-        transition: width 0.6s ease;
-      }
+    .topbar-right {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
 
-      /* ── METRICS COLUMN (span full row at bottom) ── */
-      .metrics-row {
-        grid-column: 1 / -1;
-        display: grid; grid-template-columns: 1fr;
-        gap: 16px;
-      }
+    .status-pill {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      padding: 6px 14px;
+      border-radius: 100px;
+      font-size: 12px;
+      font-weight: 600;
+      font-family: var(--mono);
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      color: var(--text-secondary);
+    }
 
-      /* Revenue panel */
-      .revenue-panel { grid-column: 1 / -1; }
-      .revenue-grid {
-        display: grid; grid-template-columns: 1fr 1fr;
-        gap: 12px; padding: 16px 18px;
-      }
-      .billable-code-list {
-        min-height: 130px;
-        max-height: 180px;
-        margin: 0 18px 16px;
-      }
-      .billable-code-item {
-        padding: 10px 12px;
-        border: 1px solid var(--border);
-        border-radius: 10px;
-        background: #f8fafc;
-      }
-      .metric-block {
-        padding: 14px 16px;
-        background: #f8fafc;
-        border: 1px solid var(--border);
-        border-radius: 10px;
-      }
-      .metric-label {
-        font-family: var(--mono); font-size: 9px; letter-spacing: 0.14em;
-        text-transform: uppercase; color: var(--muted); margin-bottom: 6px;
-      }
-      .metric-value {
-        font-family: var(--mono); font-size: 22px; font-weight: 500;
-        color: var(--text);
-        transition: color 0.4s;
-      }
-      .metric-value.positive { color: var(--good); }
-      .metric-value.accent   { color: var(--accent); }
+    .status-dot {
+      width: 7px; height: 7px;
+      border-radius: 50%;
+      background: var(--text-muted);
+    }
 
+    .status-pill.live .status-dot {
+      background: var(--success);
+      box-shadow: 0 0 0 3px rgba(5,150,105,0.15);
+      animation: blink 1.4s ease-in-out infinite;
+    }
 
-      /* ── WAVEFORM ── */
-      .waveform-wrap {
-        display: flex; align-items: center; gap: 3px;
-        height: 20px; padding: 0 4px;
-      }
-      .waveform-wrap .bar {
-        width: 3px; border-radius: 2px;
-        background: var(--accent);
-        opacity: 0.4;
-        transform-origin: center;
-      }
-      .waveform-wrap.active .bar { animation: wave 0.8s ease-in-out infinite; opacity: 0.9; }
-      .waveform-wrap .bar:nth-child(1) { animation-delay: 0s; }
-      .waveform-wrap .bar:nth-child(2) { animation-delay: 0.1s; }
-      .waveform-wrap .bar:nth-child(3) { animation-delay: 0.2s; }
-      .waveform-wrap .bar:nth-child(4) { animation-delay: 0.3s; }
-      .waveform-wrap .bar:nth-child(5) { animation-delay: 0.15s; }
-      .waveform-wrap .bar:nth-child(6) { animation-delay: 0.05s; }
-      @keyframes wave {
-        0%,100% { height: 4px; }
-        50%      { height: 16px; }
-      }
+    .status-pill.live {
+      background: var(--success-light);
+      border-color: rgba(5,150,105,0.2);
+      color: var(--success);
+    }
 
-      /* ── EMPTY STATES ── */
-      .empty {
-        font-family: var(--mono); font-size: 11px; color: var(--muted);
-        text-align: center; padding: 32px 16px;
-        opacity: 0.6;
-      }
+    @keyframes blink {
+      0%,100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
 
-      /* ── RESPONSIVE ── */
-      @media (max-width: 1100px) {
-        .grid { grid-template-columns: 1fr 1fr; }
-        .metrics-row { grid-template-columns: 1fr; }
-        .revenue-panel { grid-column: 1 / -1; }
-      }
-      @media (max-width: 700px) {
-        .shell { padding: 14px; gap: 14px; }
-        .grid { grid-template-columns: 1fr; }
-        .metrics-row { grid-template-columns: 1fr; }
-        .revenue-panel { grid-column: 1 / -1; }
-        .revenue-grid { grid-template-columns: 1fr 1fr; }
-        .controls { gap: 10px; }
-        .topbar { flex-direction: column; gap: 12px; }
-      }
-    </style>
-  </head>
-  <body>
-    <main class="shell">
+    /* ── CONTENT ── */
+    .content { padding: 24px 28px; display: flex; flex-direction: column; gap: 20px; }
 
-      <!-- TOPBAR -->
-      <header class="topbar">
-        <div class="topbar-left">
-          <p class="eyebrow">HIPAA-FIRST PROTOTYPE</p>
-          <h1>Madical Assistant for Revenue Inxrease</h1>
-          <p class="subtitle">
-            Doctor-only workspace: recordings, transcripts, and compliant billing suggestions via Azure transcription + OpenAI analysis models
-          </p>
+    /* ── ENCOUNTER SETUP CARD ── */
+    .setup-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      box-shadow: var(--shadow-sm);
+      overflow: hidden;
+    }
+
+    .card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px 22px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface2);
+    }
+
+    .card-title {
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--text);
+      letter-spacing: -0.01em;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .card-title-icon {
+      width: 26px; height: 26px;
+      border-radius: 7px;
+      background: var(--accent-light);
+      display: flex; align-items: center; justify-content: center;
+    }
+
+    .card-title-icon svg { color: var(--accent); }
+
+    .card-subtitle {
+      font-size: 11.5px;
+      color: var(--text-muted);
+      font-family: var(--mono);
+    }
+
+    .setup-body {
+      padding: 20px 22px;
+    }
+
+    .form-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr 1fr;
+      gap: 14px;
+      margin-bottom: 16px;
+    }
+
+    .form-field {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+
+    .form-label {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-secondary);
+      letter-spacing: 0.02em;
+    }
+
+    .form-input, .form-select {
+      height: 38px;
+      padding: 0 12px;
+      background: var(--surface);
+      border: 1.5px solid var(--border);
+      border-radius: var(--radius-sm);
+      color: var(--text);
+      font-family: var(--font);
+      font-size: 13px;
+      font-weight: 500;
+      outline: none;
+      transition: border-color 0.15s, box-shadow 0.15s;
+      width: 100%;
+      -webkit-appearance: none;
+    }
+
+    .form-input::placeholder { color: var(--text-muted); font-weight: 400; }
+
+    .form-input:focus, .form-select:focus {
+      border-color: var(--border-focus);
+      box-shadow: 0 0 0 3px rgba(59,130,246,0.1);
+    }
+
+    .form-select { cursor: pointer; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2.5'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 10px center; padding-right: 30px; }
+
+    .form-row-bottom {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 14px;
+    }
+
+    .consent-label {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      cursor: pointer;
+      font-size: 13px;
+      color: var(--text-secondary);
+      font-weight: 500;
+      user-select: none;
+    }
+
+    .consent-label input[type=checkbox] {
+      width: 16px; height: 16px;
+      accent-color: var(--accent);
+      cursor: pointer;
+      border-radius: 4px;
+    }
+
+    .consent-badge {
+      font-size: 10px;
+      font-family: var(--mono);
+      background: var(--warning-light);
+      color: var(--warning);
+      padding: 2px 8px;
+      border-radius: 100px;
+      font-weight: 500;
+    }
+
+    .consent-badge.signed {
+      background: var(--success-light);
+      color: var(--success);
+    }
+
+    .btn-group { display: flex; gap: 10px; }
+
+    .btn {
+      height: 40px;
+      padding: 0 20px;
+      border-radius: var(--radius-sm);
+      font-family: var(--font);
+      font-size: 13.5px;
+      font-weight: 600;
+      border: none;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      transition: all 0.15s;
+      white-space: nowrap;
+    }
+
+    .btn svg { flex-shrink: 0; }
+
+    .btn-primary {
+      background: var(--accent);
+      color: #fff;
+      box-shadow: 0 2px 8px rgba(37,99,235,0.3);
+    }
+    .btn-primary:hover:not(:disabled) {
+      background: var(--accent-hover);
+      box-shadow: 0 4px 14px rgba(37,99,235,0.38);
+      transform: translateY(-1px);
+    }
+
+    .btn-danger {
+      background: #fff;
+      color: var(--danger);
+      border: 1.5px solid #fecaca;
+    }
+    .btn-danger:hover:not(:disabled) {
+      background: #fef2f2;
+      border-color: var(--danger);
+    }
+
+    .btn-ghost {
+      background: #fff;
+      color: var(--text-secondary);
+      border: 1.5px solid var(--border);
+    }
+    .btn-ghost:hover:not(:disabled) {
+      background: var(--surface2);
+      border-color: #cbd5e1;
+    }
+
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none !important; }
+
+    /* ── WORKSPACE GRID ── */
+    .workspace {
+      display: grid;
+      grid-template-columns: 1.2fr 1fr 1fr;
+      gap: 16px;
+    }
+
+    .panel {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      box-shadow: var(--shadow-sm);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .panel-header {
+      padding: 14px 18px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: var(--surface2);
+      flex-shrink: 0;
+    }
+
+    .panel-title {
+      font-size: 12.5px;
+      font-weight: 700;
+      color: var(--text);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .panel-badge {
+      font-size: 10px;
+      font-family: var(--mono);
+      font-weight: 500;
+      padding: 2px 8px;
+      border-radius: 100px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+    }
+
+    .panel-badge.active {
+      background: var(--accent-light);
+      border-color: rgba(37,99,235,0.2);
+      color: var(--accent);
+    }
+
+    .panel-body {
+      flex: 1;
+      overflow-y: auto;
+      padding: 14px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      min-height: 280px;
+      max-height: 340px;
+      scrollbar-width: thin;
+      scrollbar-color: #e2e8f0 transparent;
+    }
+
+    /* ── TRANSCRIPT ── */
+    .tx-line {
+      padding: 10px 12px;
+      border-radius: var(--radius-sm);
+      background: var(--surface2);
+      border-left: 3px solid transparent;
+      animation: fadeUp 0.25s ease;
+    }
+
+    .tx-line.provider { border-left-color: var(--accent); }
+    .tx-line.patient  { border-left-color: #06b6d4; }
+
+    .tx-speaker {
+      font-size: 9.5px;
+      font-family: var(--mono);
+      font-weight: 500;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      margin-bottom: 3px;
+    }
+
+    .tx-line.provider .tx-speaker { color: var(--accent); }
+    .tx-line.patient .tx-speaker  { color: #06b6d4; }
+
+    .tx-text {
+      font-size: 13px;
+      color: var(--text);
+      line-height: 1.55;
+    }
+
+    /* ── GUIDANCE ── */
+    .guidance-item {
+      padding: 11px 13px;
+      border-radius: var(--radius-sm);
+      background: var(--accent-light);
+      border: 1px solid rgba(37,99,235,0.15);
+      animation: fadeUp 0.25s ease;
+    }
+
+    .guidance-tag {
+      font-size: 9.5px;
+      font-family: var(--mono);
+      font-weight: 600;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--accent);
+      margin-bottom: 4px;
+    }
+
+    .guidance-text {
+      font-size: 12.5px;
+      color: #1e3a8a;
+      line-height: 1.55;
+    }
+
+    .divider {
+      height: 1px;
+      background: var(--border);
+      flex-shrink: 0;
+    }
+
+    .chat-bubble {
+      padding: 10px 13px;
+      border-radius: var(--radius-sm);
+      font-size: 12.5px;
+      line-height: 1.55;
+      animation: fadeUp 0.25s ease;
+    }
+
+    .chat-bubble.assistant {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      color: var(--text);
+    }
+
+    .chat-bubble.user {
+      background: var(--accent-light);
+      border: 1px solid rgba(37,99,235,0.15);
+      color: #1e3a8a;
+      align-self: flex-end;
+    }
+
+    /* ── CPT CARDS ── */
+    .cpt-card {
+      padding: 12px 14px;
+      background: var(--surface2);
+      border: 1.5px solid var(--border);
+      border-radius: var(--radius-md);
+      animation: fadeUp 0.25s ease;
+      cursor: default;
+      transition: border-color 0.15s, box-shadow 0.15s;
+    }
+
+    .cpt-card:hover {
+      border-color: rgba(37,99,235,0.35);
+      box-shadow: 0 2px 12px rgba(37,99,235,0.08);
+    }
+
+    .cpt-card-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 6px;
+    }
+
+    .cpt-code {
+      font-family: var(--mono);
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--accent);
+    }
+
+    .cpt-amount {
+      font-family: var(--mono);
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--success);
+    }
+
+    .cpt-desc {
+      font-size: 12px;
+      color: var(--text-secondary);
+      line-height: 1.5;
+      margin-bottom: 8px;
+    }
+
+    .cpt-confidence-bar {
+      height: 3px;
+      background: var(--border);
+      border-radius: 2px;
+      overflow: hidden;
+    }
+
+    .cpt-confidence-fill {
+      height: 100%;
+      border-radius: 2px;
+      background: linear-gradient(90deg, #3b82f6, #06b6d4);
+      transition: width 0.5s ease;
+    }
+
+    .cpt-confidence-label {
+      display: flex;
+      justify-content: space-between;
+      margin-top: 4px;
+      font-family: var(--mono);
+      font-size: 9px;
+      color: var(--text-muted);
+    }
+
+    /* ── REVENUE SECTION ── */
+    .revenue-section {
+      display: grid;
+      grid-template-columns: 1fr 1.8fr;
+      gap: 16px;
+    }
+
+    .metrics-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+
+    .metric-tile {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      padding: 16px 18px;
+      box-shadow: var(--shadow-sm);
+    }
+
+    .metric-label {
+      font-size: 10.5px;
+      font-weight: 600;
+      color: var(--text-muted);
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .metric-label-dot {
+      width: 6px; height: 6px;
+      border-radius: 50%;
+    }
+
+    .metric-value {
+      font-family: var(--mono);
+      font-size: 26px;
+      font-weight: 500;
+      color: var(--text);
+      line-height: 1;
+    }
+
+    .metric-value.green { color: var(--success); }
+    .metric-value.blue  { color: var(--accent); }
+
+    .metric-change {
+      margin-top: 6px;
+      font-family: var(--mono);
+      font-size: 10px;
+      color: var(--text-muted);
+    }
+
+    .metric-change.up { color: var(--success); }
+
+    .multiplier-tile {
+      grid-column: 1 / -1;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: linear-gradient(135deg, #eff6ff, #dbeafe);
+      border: 1px solid rgba(37,99,235,0.18);
+      border-radius: var(--radius-md);
+      padding: 14px 18px;
+      box-shadow: var(--shadow-sm);
+    }
+
+    .multiplier-info { display: flex; flex-direction: column; gap: 3px; }
+    .multiplier-label { font-size: 11px; font-weight: 600; color: #1d4ed8; font-family: var(--mono); letter-spacing: 0.04em; text-transform: uppercase; }
+    .multiplier-sub { font-size: 11px; color: #3b82f6; }
+    .multiplier-value { font-family: var(--mono); font-size: 28px; font-weight: 500; color: var(--accent); }
+
+    /* Billable codes table */
+    .billable-panel {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      box-shadow: var(--shadow-sm);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .table-header {
+      display: grid;
+      grid-template-columns: 80px 1fr 90px 80px;
+      gap: 8px;
+      padding: 10px 16px;
+      background: var(--surface2);
+      border-bottom: 1px solid var(--border);
+      font-size: 10px;
+      font-weight: 700;
+      font-family: var(--mono);
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+    }
+
+    .table-body {
+      flex: 1;
+      overflow-y: auto;
+      max-height: 200px;
+      scrollbar-width: thin;
+    }
+
+    .table-row {
+      display: grid;
+      grid-template-columns: 80px 1fr 90px 80px;
+      gap: 8px;
+      padding: 11px 16px;
+      border-bottom: 1px solid var(--border);
+      align-items: center;
+      transition: background 0.12s;
+      animation: fadeUp 0.2s ease;
+    }
+
+    .table-row:last-child { border-bottom: none; }
+    .table-row:hover { background: var(--surface2); }
+
+    .table-code { font-family: var(--mono); font-size: 12px; font-weight: 500; color: var(--accent); }
+    .table-desc { font-size: 12.5px; color: var(--text); }
+    .table-amount { font-family: var(--mono); font-size: 12px; font-weight: 600; color: var(--success); text-align: right; }
+
+    .status-tag {
+      font-size: 10px;
+      font-family: var(--mono);
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: 100px;
+      text-align: center;
+    }
+
+    .status-tag.confirmed { background: var(--success-light); color: var(--success); }
+    .status-tag.pending   { background: var(--warning-light); color: var(--warning); }
+
+    /* ── WAVEFORM ── */
+    .waveform {
+      display: flex;
+      align-items: center;
+      gap: 2.5px;
+      height: 18px;
+    }
+
+    .waveform .bar {
+      width: 2.5px;
+      border-radius: 2px;
+      background: var(--text-muted);
+      transition: background 0.3s;
+    }
+
+    .waveform.active .bar {
+      background: var(--success);
+      animation: wavebar 0.8s ease-in-out infinite;
+    }
+
+    .waveform .bar:nth-child(1) { animation-delay: 0.0s; }
+    .waveform .bar:nth-child(2) { animation-delay: 0.12s; }
+    .waveform .bar:nth-child(3) { animation-delay: 0.24s; }
+    .waveform .bar:nth-child(4) { animation-delay: 0.16s; }
+    .waveform .bar:nth-child(5) { animation-delay: 0.08s; }
+
+    @keyframes wavebar {
+      0%,100% { height: 3px; opacity: 0.6; }
+      50%      { height: 16px; opacity: 1; }
+    }
+
+    /* ── EMPTY STATE ── */
+    .empty-state {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 40px 16px;
+      color: var(--text-muted);
+      text-align: center;
+    }
+
+    .empty-state svg { opacity: 0.3; }
+    .empty-state p { font-size: 12px; font-family: var(--mono); }
+
+    /* ── ANIMATIONS ── */
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(6px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    /* ── SCROLLBAR ── */
+    .panel-body::-webkit-scrollbar, .table-body::-webkit-scrollbar { width: 4px; }
+    .panel-body::-webkit-scrollbar-thumb, .table-body::-webkit-scrollbar-thumb { background: #e2e8f0; border-radius: 4px; }
+
+    /* ── RESPONSIVE ── */
+    @media (max-width: 1200px) {
+      .workspace { grid-template-columns: 1fr 1fr; }
+      .form-grid { grid-template-columns: 1fr 1fr; }
+    }
+
+    @media (max-width: 900px) {
+      .sidebar { display: none; }
+      .revenue-section { grid-template-columns: 1fr; }
+    }
+
+    @media (max-width: 700px) {
+      .content { padding: 16px; }
+      .workspace { grid-template-columns: 1fr; }
+      .form-grid { grid-template-columns: 1fr; }
+      .metrics-grid { grid-template-columns: 1fr 1fr; }
+    }
+  </style>
+</head>
+<body>
+<div class="layout">
+
+  <!-- SIDEBAR -->
+  <aside class="sidebar">
+    <div class="sidebar-logo">
+      <div class="logo-icon">
+        <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+      </div>
+      <div class="logo-text">
+        <span class="logo-name">Madical Assistant for Revenue Inxrease</span>
+        <span class="logo-tagline">Clinical Intelligence</span>
+      </div>
+    </div>
+
+    <div class="sidebar-section">Workspace</div>
+    <a class="nav-item active" href="#">
+      <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+      Live Encounter
+    </a>
+    <a class="nav-item" href="#">
+      <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+      Past Encounters
+    </a>
+    <a class="nav-item" href="#">
+      <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+      Revenue Reports
+    </a>
+
+    <div class="sidebar-section">Settings</div>
+    <a class="nav-item" href="#">
+      <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93l-1.41 1.41M4.93 4.93l1.41 1.41M4.93 19.07l1.41-1.41M19.07 19.07l-1.41-1.41M1 12h2M21 12h2M12 1v2M12 21v2"/></svg>
+      Preferences
+    </a>
+    <a class="nav-item" href="#">
+      <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+      HIPAA Settings
+    </a>
+
+    <div class="sidebar-footer">
+      <div class="doctor-pill">
+        <div class="doctor-avatar">Dr</div>
+        <div class="doctor-info">
+          <div class="doctor-name">Dr. Sarah Ahmed</div>
+          <div class="doctor-role">Attending Physician</div>
         </div>
-        <div id="sessionBadge" class="badge">Session Idle</div>
-      </header>
+      </div>
+    </div>
+  </aside>
 
-      <!-- CONTROLS -->
-            <section class="controls">
-        <div class="field">
-          <label for="doctorRef">Doctor Reference</label>
-          <input id="doctorRef" placeholder="e.g. DR-001" />
-        </div>
-        <div class="field">
-          <label for="patientRef">Patient Reference</label>
-          <input id="patientRef" placeholder="e.g. PT-1042" />
-        </div>
-        <div class="field">
-          <label for="consentFormId">Intake Consent Form ID</label>
-          <input id="consentFormId" placeholder="e.g. CONSENT-2026-0012" />
-        </div>
-        <div class="field">
-          <label for="insurancePlan">Insurance Plan</label>
-          <select id="insurancePlan">
-            <option value="medicare">Medicare</option>
-            <option value="commercial">Commercial</option>
-            <option value="medicaid">Medicaid</option>
-            <option value="self-pay">Self-Pay</option>
-          </select>
-        </div>
-        <div class="field">
-          <label for="visitType">Visit Type</label>
-          <select id="visitType">
-            <option value="follow-up">Follow-up</option>
-            <option value="annual-wellness">Annual Wellness</option>
-            <option value="chronic-care">Chronic Care</option>
-          </select>
-        </div>
-        <label class="consent">
-          <input id="consentGiven" type="checkbox" />
-          <span>Intake consent signed by patient (doctor retains records)</span>
-        </label>
-        <div class="btn-row">
-          <button id="startBtn" class="btn primary">Start Encounter</button>
-          <button id="stopBtn" class="btn ghost" disabled>Stop</button>
-        </div>
-      </section>
+  <!-- MAIN -->
+  <div class="main">
 
-      <!-- MAIN PANELS -->
-      <div class="grid">
+    <!-- TOPBAR -->
+    <header class="topbar">
+      <div class="topbar-left">
+        <div class="breadcrumb">
+          <span>Madical Assistant for Revenue Inxrease</span>
+          <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg>
+          <span>Live Encounter</span>
+        </div>
+      </div>
+      <div class="topbar-right">
+        <div id="sessionStatus" class="status-pill">
+          <div class="status-dot"></div>
+          <span id="sessionText">Session Idle</span>
+        </div>
+      </div>
+    </header>
+
+    <!-- CONTENT -->
+    <div class="content">
+
+      <!-- ENCOUNTER SETUP -->
+      <div class="setup-card">
+        <div class="card-header">
+          <div class="card-title">
+            <div class="card-title-icon">
+              <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+            </div>
+            Encounter Setup
+          </div>
+          <span class="card-subtitle">HIPAA-FIRST · DOCTOR-ONLY WORKSPACE</span>
+        </div>
+        <div class="setup-body">
+          <div class="form-grid">
+            <div class="form-field">
+              <label class="form-label" for="doctorRef">Doctor ID</label>
+              <input class="form-input" id="doctorRef" placeholder="e.g. DR-001" />
+            </div>
+            <div class="form-field">
+              <label class="form-label" for="patientRef">Patient Reference</label>
+              <input class="form-input" id="patientRef" placeholder="e.g. PT-1042" />
+            </div>
+            <div class="form-field">
+              <label class="form-label" for="consentFormId">Consent Form ID</label>
+              <input class="form-input" id="consentFormId" placeholder="e.g. CONSENT-2026-0012" />
+            </div>
+            <div class="form-field">
+              <label class="form-label" for="insurancePlan">Insurance Plan</label>
+              <select class="form-select" id="insurancePlan">
+                <option value="medicare">Medicare</option>
+                <option value="commercial">Commercial</option>
+                <option value="medicaid">Medicaid</option>
+                <option value="self-pay">Self-Pay</option>
+              </select>
+            </div>
+            <div class="form-field">
+              <label class="form-label" for="visitType">Visit Type</label>
+              <select class="form-select" id="visitType">
+                <option value="follow-up">Follow-up Visit</option>
+                <option value="annual-wellness">Annual Wellness</option>
+                <option value="chronic-care">Chronic Care Management</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-row-bottom">
+            <label class="consent-label" for="consentGiven">
+              <input type="checkbox" id="consentGiven" />
+              Patient intake consent signed
+              <span class="consent-badge" id="consentBadge">Required</span>
+            </label>
+            <div class="btn-group">
+              <button class="btn btn-ghost" id="stopBtn" disabled>
+                <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>
+                End Encounter
+              </button>
+              <button class="btn btn-primary" id="startBtn">
+                <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/></svg>
+                Start Encounter
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- WORKSPACE PANELS -->
+      <div class="workspace">
 
         <!-- Transcript -->
-        <article class="panel">
-          <div class="panel-head">
-            <h2>Live Transcript</h2>
-            <div class="waveform-wrap" id="waveform">
-              <div class="bar" style="height:6px"></div>
-              <div class="bar" style="height:10px"></div>
-              <div class="bar" style="height:14px"></div>
-              <div class="bar" style="height:8px"></div>
-              <div class="bar" style="height:12px"></div>
-              <div class="bar" style="height:6px"></div>
+        <div class="panel">
+          <div class="panel-header">
+            <div class="panel-title">
+              <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+              Live Transcript
+            </div>
+            <div style="display:flex;align-items:center;gap:10px;">
+              <div class="waveform" id="waveform">
+                <div class="bar" style="height:4px"></div>
+                <div class="bar" style="height:8px"></div>
+                <div class="bar" style="height:12px"></div>
+                <div class="bar" style="height:7px"></div>
+                <div class="bar" style="height:5px"></div>
+              </div>
+              <span class="panel-badge" id="txBadge">Idle</span>
             </div>
           </div>
-          <div id="transcriptFeed" class="scroll-panel">
-            <div class="empty">Transcript will appear here during encounter</div>
+          <div class="panel-body" id="transcriptFeed">
+            <div class="empty-state">
+              <svg width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v4M8 23h8"/></svg>
+              <p>Transcript appears here during encounter</p>
+            </div>
           </div>
-        </article>
+        </div>
 
-        <!-- Realtime Assistant -->
-        <article class="panel">
-          <div class="panel-head">
-            <h2>Doctor Recommendations</h2>
+        <!-- Recommendations -->
+        <div class="panel">
+          <div class="panel-header">
+            <div class="panel-title">
+              <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+              Doctor Guidance
+            </div>
+            <span class="panel-badge active" id="guidanceBadge">AI Live</span>
           </div>
-          <div id="guidanceList" class="scroll-panel guidance-panel">
-            <div class="empty">Live prompts will appear here</div>
+          <div class="panel-body" id="guidanceList" style="max-height:160px;">
+            <div class="empty-state">
+              <svg width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0 1 12 2.944a11.955 11.955 0 0 1-8.618 3.04A12.02 12.02 0 0 0 3 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
+              <p>Real-time prompts will appear here</p>
+            </div>
           </div>
-          <div id="chatFeed" class="scroll-panel chat-panel">
-            <div class="empty">Assistant analysis updates will appear here</div>
+          <div class="divider"></div>
+          <div class="panel-body" id="chatFeed" style="max-height:140px;">
+            <div class="empty-state">
+              <svg width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+              <p>Assistant analysis will appear here</p>
+            </div>
           </div>
-        </article>
+        </div>
 
         <!-- CPT Suggestions -->
-        <article class="panel">
-          <div class="panel-head">
-            <h2>Compliant CPT Suggestions</h2>
+        <div class="panel">
+          <div class="panel-header">
+            <div class="panel-title">
+              <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+              CPT Code Suggestions
+            </div>
+            <span class="panel-badge" id="cptBadge">0 codes</span>
           </div>
-          <div id="suggestionList" class="scroll-panel suggestions">
-            <div class="empty">CPT codes will surface as the encounter progresses</div>
+          <div class="panel-body" id="suggestionList">
+            <div class="empty-state">
+              <svg width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1" ry="1"/></svg>
+              <p>CPT codes surface as encounter progresses</p>
+            </div>
           </div>
-        </article>
+        </div>
+      </div>
 
-        <!-- BOTTOM ROW: metrics-row -->
-        <div class="metrics-row">
+      <!-- REVENUE SECTION -->
+      <div class="revenue-section">
 
-          <!-- Revenue Tracker -->
-          <article class="panel revenue-panel">
-            <div class="panel-head">
-              <h2>Revenue Tracker</h2>
+        <!-- Metric Tiles -->
+        <div class="metrics-grid">
+          <div class="metric-tile">
+            <div class="metric-label"><span class="metric-label-dot" style="background:#94a3b8"></span>Baseline</div>
+            <div class="metric-value" id="baselineRevenue">$0</div>
+            <div class="metric-change">Standard visit value</div>
+          </div>
+          <div class="metric-tile">
+            <div class="metric-label"><span class="metric-label-dot" style="background:#059669"></span>Built From Transcript</div>
+            <div class="metric-value green" id="opportunityRevenue">$0</div>
+            <div class="metric-change up" id="oppChange">—</div>
+          </div>
+          <div class="metric-tile">
+            <div class="metric-label"><span class="metric-label-dot" style="background:#2563eb"></span>Earned This Session</div>
+            <div class="metric-value blue" id="earnedNowRevenue">$0</div>
+            <div class="metric-change" id="earnedChange">—</div>
+          </div>
+          <div class="metric-tile">
+            <div class="metric-label"><span class="metric-label-dot" style="background:#0f172a"></span>Projected Total</div>
+            <div class="metric-value" id="projectedRevenue">$0</div>
+            <div class="metric-change">All confirmed codes</div>
+          </div>
+          <div class="multiplier-tile">
+            <div class="multiplier-info">
+              <div class="multiplier-label">Payer Multiplier</div>
+              <div class="multiplier-sub" id="multiplierDesc">Select insurance plan</div>
             </div>
-            <div class="revenue-grid">
-              <div class="metric-block">
-                <div class="metric-label">Baseline</div>
-                <div class="metric-value" id="baselineRevenue">$0.00</div>
+            <div class="multiplier-value" id="payerMultiplier">×1.00</div>
+          </div>
+        </div>
+
+        <!-- Billable Codes Table -->
+        <div class="billable-panel">
+          <div class="card-header">
+            <div class="card-title">
+              <div class="card-title-icon">
+                <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1" ry="1"/></svg>
               </div>
-              <div class="metric-block">
-                <div class="metric-label">Built From Transcript</div>
-                <div class="metric-value positive" id="opportunityRevenue">$0.00</div>
-              </div>
-              <div class="metric-block">
-                <div class="metric-label">Estimated Earned Now</div>
-                <div class="metric-value accent" id="earnedNowRevenue">$0.00</div>
-              </div>
-              <div class="metric-block">
-                <div class="metric-label">Projected Total</div>
-                <div class="metric-value" id="projectedRevenue">$0.00</div>
-              </div>
-              <div class="metric-block">
-                <div class="metric-label">Payer Multiplier</div>
-                <div class="metric-value" id="payerMultiplier">x1.00</div>
-              </div>
+              Current Billable Codes
             </div>
-            <div class="panel-head">
-              <h2>Current Billable Codes</h2>
+            <span class="panel-badge" id="billableCount">0 items</span>
+          </div>
+          <div class="table-header">
+            <div>Code</div>
+            <div>Description</div>
+            <div style="text-align:right">Amount</div>
+            <div style="text-align:center">Status</div>
+          </div>
+          <div class="table-body" id="billableCodesList">
+            <div class="empty-state" style="padding:30px;">
+              <p>No codes logged yet</p>
             </div>
-            <div id="billableCodesList" class="scroll-panel billable-code-list">
-              <div class="empty">Codes with estimated revenue will appear here</div>
-            </div>
-          </article>
+          </div>
+        </div>
 
-        </div><!-- /metrics-row -->
+      </div>
 
-      </div><!-- /grid -->
+    </div><!-- /content -->
+  </div><!-- /main -->
+</div>
 
-    </main>
-
-    <audio id="assistantAudio" autoplay></audio>
-    <script type="module" src="./app.js"></script>
-  </body>
+<audio id="assistantAudio" autoplay></audio>
+<script type="module" src="./app.js"></script>
+</body>
 </html>
 
