@@ -6,9 +6,15 @@ import {
   appendTranscriptSegment,
   createAppointment,
   getAppointment,
+  listAppointments,
 } from "../services/appointment-store.js";
 import { writeAuditEvent } from "../services/audit-service.js";
-import { getCodebookStatus, searchCodes } from "../services/codebook-service.js";
+import {
+  getCodebookSnapshot,
+  getCodebookStatus,
+  searchCodes,
+  updateCodeById,
+} from "../services/codebook-service.js";
 import { runLiveAnalysisPipeline } from "../services/live-analysis-service.js";
 import { getAzureSpeechToken, uploadAppointmentAudio } from "../services/azure-service.js";
 import { normalizeIncomingTranscript, parseAwsTranscribeMedicalPayload } from "../services/stt-service.js";
@@ -43,6 +49,8 @@ const withAsync = (handler) => async (request, response) => {
 const fireAndForgetAudit = (eventType, payload) => {
   writeAuditEvent(eventType, payload).catch(() => {});
 };
+
+const roundMoney = (value) => Number(Number(value || 0).toFixed(2));
 
 const buildTranscriptResponse = ({ appointment, processedSegment, pipelineResult }) => ({
   transcriptCount: appointment.transcriptSegments.length,
@@ -204,11 +212,102 @@ router.post(
 );
 
 router.get(
+  "/appointments",
+  withAsync(async (_request, response) => {
+    response.json({
+      appointments: listAppointments(),
+    });
+  })
+);
+
+router.get(
   "/appointments/:appointmentId",
   withAsync(async (request, response) => {
     const appointment = ensureAppointment(request.params.appointmentId, response);
     if (!appointment) return;
     response.json({ appointment });
+  })
+);
+
+router.get(
+  "/reports/revenue",
+  withAsync(async (_request, response) => {
+    const appointments = listAppointments();
+    const totals = {
+      encounters: appointments.length,
+      consentedEncounters: 0,
+      totalProjectedRevenue: 0,
+      totalEarnedNow: 0,
+      avgProjectedPerEncounter: 0,
+    };
+
+    const byInsuranceMap = new Map();
+    const byVisitTypeMap = new Map();
+
+    for (const appointment of appointments) {
+      const projectedRevenue = Number(appointment.projectedRevenue || 0);
+      const earnedNow = Number(appointment.earnedNow || 0);
+
+      totals.totalProjectedRevenue += projectedRevenue;
+      totals.totalEarnedNow += earnedNow;
+      if (appointment.consentGiven) {
+        totals.consentedEncounters += 1;
+      }
+
+      const insuranceKey = String(appointment.insurancePlan || "unknown").toLowerCase();
+      const insuranceBucket = byInsuranceMap.get(insuranceKey) || {
+        insurancePlan: insuranceKey,
+        encounters: 0,
+        projectedRevenue: 0,
+        earnedNow: 0,
+      };
+      insuranceBucket.encounters += 1;
+      insuranceBucket.projectedRevenue += projectedRevenue;
+      insuranceBucket.earnedNow += earnedNow;
+      byInsuranceMap.set(insuranceKey, insuranceBucket);
+
+      const visitKey = String(appointment.visitType || "unknown").toLowerCase();
+      const visitBucket = byVisitTypeMap.get(visitKey) || {
+        visitType: visitKey,
+        encounters: 0,
+        projectedRevenue: 0,
+        earnedNow: 0,
+      };
+      visitBucket.encounters += 1;
+      visitBucket.projectedRevenue += projectedRevenue;
+      visitBucket.earnedNow += earnedNow;
+      byVisitTypeMap.set(visitKey, visitBucket);
+    }
+
+    totals.totalProjectedRevenue = roundMoney(totals.totalProjectedRevenue);
+    totals.totalEarnedNow = roundMoney(totals.totalEarnedNow);
+    totals.avgProjectedPerEncounter = totals.encounters
+      ? roundMoney(totals.totalProjectedRevenue / totals.encounters)
+      : 0;
+
+    const byInsurance = Array.from(byInsuranceMap.values())
+      .map((bucket) => ({
+        ...bucket,
+        projectedRevenue: roundMoney(bucket.projectedRevenue),
+        earnedNow: roundMoney(bucket.earnedNow),
+      }))
+      .sort((a, b) => b.projectedRevenue - a.projectedRevenue);
+
+    const byVisitType = Array.from(byVisitTypeMap.values())
+      .map((bucket) => ({
+        ...bucket,
+        projectedRevenue: roundMoney(bucket.projectedRevenue),
+        earnedNow: roundMoney(bucket.earnedNow),
+      }))
+      .sort((a, b) => b.projectedRevenue - a.projectedRevenue);
+
+    response.json({
+      generatedAt: new Date().toISOString(),
+      totals,
+      byInsurance,
+      byVisitType,
+      recentAppointments: appointments.slice(0, 20),
+    });
   })
 );
 
@@ -373,6 +472,51 @@ router.post(
     });
 
     response.status(201).json({ recording: uploaded });
+  })
+);
+
+router.get(
+  "/codebook",
+  withAsync(async (_request, response) => {
+    const snapshot = getCodebookSnapshot();
+    response.json({
+      codebook: snapshot,
+      status: getCodebookStatus(),
+    });
+  })
+);
+
+router.put(
+  "/codebook/codes/:code",
+  withAsync(async (request, response) => {
+    const code = String(request.params.code || "").toUpperCase().trim();
+    if (!code) {
+      response.status(400).json({ error: "Code is required." });
+      return;
+    }
+
+    const updated = updateCodeById(code, {
+      title: request.body.title,
+      medicareRate: request.body.medicareRate,
+      documentationNeeded: request.body.documentationNeeded,
+      complianceNotes: request.body.complianceNotes,
+    });
+
+    if (!updated) {
+      response.status(404).json({ error: "Code not found in codebook." });
+      return;
+    }
+
+    fireAndForgetAudit("codebook.code.updated", {
+      code,
+      fieldsUpdated: Object.keys(request.body || {}),
+      at: new Date().toISOString(),
+    });
+
+    response.json({
+      code: updated,
+      status: getCodebookStatus(),
+    });
   })
 );
 

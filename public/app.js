@@ -13,6 +13,20 @@ const state = {
   lastAssistantMessage: "",
   lastThrottleLogAt: 0,
   suggestionStream: null,
+  currentView: "live",
+  loadedViewData: {
+    past: false,
+    revenue: false,
+    settings: false,
+    hipaa: false,
+    codebook: false,
+  },
+  codebook: {
+    meta: null,
+    codes: [],
+    filteredCodes: [],
+    selectedCode: null,
+  },
 };
 
 const ui = {
@@ -47,9 +61,88 @@ const ui = {
   sessionStatus: document.getElementById("sessionStatus"),
   sessionText: document.getElementById("sessionText"),
   waveform: document.getElementById("waveform"),
+  currentViewLabel: document.getElementById("currentViewLabel"),
+  navItems: Array.from(document.querySelectorAll(".nav-item[data-view]")),
+  viewPanels: Array.from(document.querySelectorAll(".view-panel")),
+  pastEncountersSummary: document.getElementById("pastEncountersSummary"),
+  pastEncountersBody: document.getElementById("pastEncountersBody"),
+  refreshPastBtn: document.getElementById("refreshPastBtn"),
+  reportGeneratedAt: document.getElementById("reportGeneratedAt"),
+  reportTotalEncounters: document.getElementById("reportTotalEncounters"),
+  reportConsentedEncounters: document.getElementById("reportConsentedEncounters"),
+  reportTotalProjected: document.getElementById("reportTotalProjected"),
+  reportTotalEarned: document.getElementById("reportTotalEarned"),
+  reportAvgProjected: document.getElementById("reportAvgProjected"),
+  reportByInsuranceBody: document.getElementById("reportByInsuranceBody"),
+  reportByVisitTypeBody: document.getElementById("reportByVisitTypeBody"),
+  refreshRevenueBtn: document.getElementById("refreshRevenueBtn"),
+  settingsSummary: document.getElementById("settingsSummary"),
+  jumpViewButtons: Array.from(document.querySelectorAll("[data-jump-view]")),
+  prefDefaultView: document.getElementById("prefDefaultView"),
+  prefAutoOpenPast: document.getElementById("prefAutoOpenPast"),
+  prefAutoRefreshReports: document.getElementById("prefAutoRefreshReports"),
+  prefCompactTables: document.getElementById("prefCompactTables"),
+  savePreferencesBtn: document.getElementById("savePreferencesBtn"),
+  preferencesStatus: document.getElementById("preferencesStatus"),
+  preferencesSavedAt: document.getElementById("preferencesSavedAt"),
+  hipaaSettingsContent: document.getElementById("hipaaSettingsContent"),
+  refreshHipaaBtn: document.getElementById("refreshHipaaBtn"),
+  codebookMeta: document.getElementById("codebookMeta"),
+  codebookSearchInput: document.getElementById("codebookSearchInput"),
+  refreshCodebookBtn: document.getElementById("refreshCodebookBtn"),
+  codebookTableBody: document.getElementById("codebookTableBody"),
+  codebookEditorState: document.getElementById("codebookEditorState"),
+  codebookEditCode: document.getElementById("codebookEditCode"),
+  codebookEditRate: document.getElementById("codebookEditRate"),
+  codebookEditTitle: document.getElementById("codebookEditTitle"),
+  codebookEditDocumentation: document.getElementById("codebookEditDocumentation"),
+  codebookEditCompliance: document.getElementById("codebookEditCompliance"),
+  saveCodebookBtn: document.getElementById("saveCodebookBtn"),
 };
 
 const safeNumber = (value) => Number(value || 0).toFixed(2);
+const PREFS_KEY = "mari.preferences.v1";
+const viewTitles = {
+  live: "Live Encounter",
+  past: "Past Encounters",
+  revenue: "Revenue Reports",
+  settings: "Settings",
+  codebook: "CPT Codebook",
+  preferences: "Preferences",
+  hipaa: "HIPAA Settings",
+};
+const defaultPrefs = {
+  defaultView: "live",
+  autoOpenPastAfterStop: false,
+  autoRefreshReports: true,
+  compactTables: false,
+};
+
+const formatCurrency = (value) => `$${safeNumber(value)}`;
+
+const formatDateTime = (value) => {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return "-";
+  return parsed.toLocaleString();
+};
+
+const readPreferences = () => {
+  try {
+    const raw = localStorage.getItem(PREFS_KEY);
+    if (!raw) return { ...defaultPrefs };
+    const parsed = JSON.parse(raw);
+    return {
+      ...defaultPrefs,
+      ...(parsed || {}),
+    };
+  } catch {
+    return { ...defaultPrefs };
+  }
+};
+
+const writePreferences = (prefs) => {
+  localStorage.setItem(PREFS_KEY, JSON.stringify(prefs));
+};
 
 const escapeHtml = (value) =>
   String(value || "")
@@ -347,6 +440,386 @@ const api = async (path, options = {}) => {
     throw new Error(data.error || `Request failed: ${response.status}`);
   }
   return data;
+};
+
+const renderTableBody = (container, rowsHtml, emptyColSpan, emptyText) => {
+  if (!container) return;
+  if (rowsHtml && rowsHtml.length) {
+    container.innerHTML = rowsHtml;
+    return;
+  }
+  container.innerHTML = `<tr><td colspan="${emptyColSpan}" class="tiny-note">${escapeHtml(
+    emptyText
+  )}</td></tr>`;
+};
+
+const setCompactTableMode = (enabled) => {
+  document.body.classList.toggle("compact-tables", Boolean(enabled));
+};
+
+const applyPreferencesToUi = (prefs) => {
+  if (ui.prefDefaultView) ui.prefDefaultView.value = prefs.defaultView || "live";
+  if (ui.prefAutoOpenPast) ui.prefAutoOpenPast.checked = Boolean(prefs.autoOpenPastAfterStop);
+  if (ui.prefAutoRefreshReports) ui.prefAutoRefreshReports.checked = Boolean(prefs.autoRefreshReports);
+  if (ui.prefCompactTables) ui.prefCompactTables.checked = Boolean(prefs.compactTables);
+  setCompactTableMode(Boolean(prefs.compactTables));
+};
+
+const readPreferencesFromUi = () => ({
+  defaultView: ui.prefDefaultView?.value || "live",
+  autoOpenPastAfterStop: Boolean(ui.prefAutoOpenPast?.checked),
+  autoRefreshReports: Boolean(ui.prefAutoRefreshReports?.checked),
+  compactTables: Boolean(ui.prefCompactTables?.checked),
+});
+
+const renderPastEncounters = (appointments) => {
+  if (!ui.pastEncountersBody) return;
+
+  const rowsHtml = (appointments || [])
+    .map(
+      (item) => `
+      <tr>
+        <td class="table-code-pill">${escapeHtml(item.id)}</td>
+        <td>${escapeHtml(item.doctorRef || "-")}</td>
+        <td>${escapeHtml(item.patientRef || "-")}</td>
+        <td>${escapeHtml(item.insurancePlan || "-")}</td>
+        <td>${escapeHtml(item.visitType || "-")}</td>
+        <td>${escapeHtml(formatDateTime(item.createdAt))}</td>
+        <td>${escapeHtml(formatCurrency(item.projectedRevenue || 0))}</td>
+      </tr>`
+    )
+    .join("");
+
+  renderTableBody(ui.pastEncountersBody, rowsHtml, 7, "No completed encounters to show.");
+
+  if (ui.pastEncountersSummary) {
+    const count = Array.isArray(appointments) ? appointments.length : 0;
+    ui.pastEncountersSummary.textContent = `${count} encounter${count === 1 ? "" : "s"}`;
+  }
+};
+
+const loadPastEncounters = async () => {
+  const payload = await api("/api/appointments");
+  renderPastEncounters(payload.appointments || []);
+  state.loadedViewData.past = true;
+};
+
+const renderRevenueReport = (report) => {
+  if (ui.reportGeneratedAt) {
+    ui.reportGeneratedAt.textContent = report?.generatedAt
+      ? `Generated ${formatDateTime(report.generatedAt)}`
+      : "Not generated yet";
+  }
+
+  const totals = report?.totals || {};
+  if (ui.reportTotalEncounters) ui.reportTotalEncounters.textContent = String(totals.encounters || 0);
+  if (ui.reportConsentedEncounters) {
+    ui.reportConsentedEncounters.textContent = String(totals.consentedEncounters || 0);
+  }
+  if (ui.reportTotalProjected) {
+    ui.reportTotalProjected.textContent = formatCurrency(totals.totalProjectedRevenue || 0);
+  }
+  if (ui.reportTotalEarned) {
+    ui.reportTotalEarned.textContent = formatCurrency(totals.totalEarnedNow || 0);
+  }
+  if (ui.reportAvgProjected) {
+    ui.reportAvgProjected.textContent = formatCurrency(totals.avgProjectedPerEncounter || 0);
+  }
+
+  const insuranceRows = (report?.byInsurance || [])
+    .map(
+      (item) => `
+      <tr>
+        <td>${escapeHtml(item.insurancePlan || "-")}</td>
+        <td>${escapeHtml(String(item.encounters || 0))}</td>
+        <td>${escapeHtml(formatCurrency(item.projectedRevenue || 0))}</td>
+        <td>${escapeHtml(formatCurrency(item.earnedNow || 0))}</td>
+      </tr>`
+    )
+    .join("");
+  renderTableBody(ui.reportByInsuranceBody, insuranceRows, 4, "No insurance data.");
+
+  const visitRows = (report?.byVisitType || [])
+    .map(
+      (item) => `
+      <tr>
+        <td>${escapeHtml(item.visitType || "-")}</td>
+        <td>${escapeHtml(String(item.encounters || 0))}</td>
+        <td>${escapeHtml(formatCurrency(item.projectedRevenue || 0))}</td>
+        <td>${escapeHtml(formatCurrency(item.earnedNow || 0))}</td>
+      </tr>`
+    )
+    .join("");
+  renderTableBody(ui.reportByVisitTypeBody, visitRows, 4, "No visit type data.");
+};
+
+const loadRevenueReport = async () => {
+  const payload = await api("/api/reports/revenue");
+  renderRevenueReport(payload || {});
+  state.loadedViewData.revenue = true;
+  return payload;
+};
+
+const renderSettingsSummary = ({ report, compliance }) => {
+  if (!ui.settingsSummary) return;
+
+  const codebook = compliance?.codebook || {};
+  const totals = report?.totals || {};
+  ui.settingsSummary.innerHTML = `
+    <div class="kv-row"><span class="kv-key">Codebook Version</span><span class="kv-value">${escapeHtml(
+      codebook.version || "-"
+    )}</span></div>
+    <div class="kv-row"><span class="kv-key">Codebook Age</span><span class="kv-value">${escapeHtml(
+      `${Number(codebook.ageDays || 0)} days`
+    )}</span></div>
+    <div class="kv-row"><span class="kv-key">Realtime Streaming</span><span class="kv-value">${escapeHtml(
+      compliance?.integrations?.realtimeStreamingConfigured ? "Enabled" : "Disabled"
+    )}</span></div>
+    <div class="kv-row"><span class="kv-key">OpenAI Analysis</span><span class="kv-value">${escapeHtml(
+      compliance?.integrations?.openAiAnalysisConfigured ? "Configured" : "Not configured"
+    )}</span></div>
+    <div class="kv-row"><span class="kv-key">Total Encounters</span><span class="kv-value">${escapeHtml(
+      String(totals.encounters || 0)
+    )}</span></div>
+    <div class="kv-row"><span class="kv-key">Total Projected</span><span class="kv-value">${escapeHtml(
+      formatCurrency(totals.totalProjectedRevenue || 0)
+    )}</span></div>
+  `;
+};
+
+const loadSettingsSummary = async () => {
+  const [report, compliance] = await Promise.all([
+    loadRevenueReport(),
+    api("/api/compliance/status"),
+  ]);
+  renderSettingsSummary({ report, compliance });
+  state.loadedViewData.settings = true;
+};
+
+const renderHipaaSettings = (payload) => {
+  if (!ui.hipaaSettingsContent) return;
+
+  const integrations = payload?.integrations || {};
+  const targets = payload?.latencyTargets || {};
+  const notes = Array.isArray(payload?.notes) ? payload.notes : [];
+
+  const integrationRows = Object.entries(integrations)
+    .map(
+      ([key, value]) => `
+      <div class="kv-row">
+        <span class="kv-key">${escapeHtml(key)}</span>
+        <span class="kv-value">${escapeHtml(value ? "Enabled" : "Disabled")}</span>
+      </div>`
+    )
+    .join("");
+
+  const noteRows = notes
+    .map((note) => `<div class="tiny-note">${escapeHtml(note)}</div>`)
+    .join("");
+
+  ui.hipaaSettingsContent.innerHTML = `
+    <div class="info-card">
+      <h3>Integration Status</h3>
+      <div class="kv-list">${integrationRows || '<div class="tiny-note">No integration data.</div>'}</div>
+    </div>
+    <div class="info-card">
+      <h3>Latency Targets</h3>
+      <div class="kv-list">
+        <div class="kv-row"><span class="kv-key">AI target (ms)</span><span class="kv-value">${escapeHtml(
+          String(targets.aiTargetMs || "-")
+        )}</span></div>
+        <div class="kv-row"><span class="kv-key">AI timeout (ms)</span><span class="kv-value">${escapeHtml(
+          String(targets.aiRequestTimeoutMs || "-")
+        )}</span></div>
+      </div>
+      <h3 style="margin-top:14px;">Notes</h3>
+      <div class="kv-list">${noteRows || '<div class="tiny-note">No notes.</div>'}</div>
+    </div>
+  `;
+};
+
+const loadHipaaSettings = async () => {
+  const payload = await api("/api/compliance/status");
+  renderHipaaSettings(payload || {});
+  state.loadedViewData.hipaa = true;
+};
+
+const setCodebookMeta = (status, count) => {
+  if (!ui.codebookMeta) return;
+  const version = status?.version || "-";
+  const updated = status?.lastUpdated || "-";
+  ui.codebookMeta.textContent = `Version ${version} · ${count} codes · Updated ${updated}`;
+};
+
+const setCodebookEditorState = (text) => {
+  if (!ui.codebookEditorState) return;
+  ui.codebookEditorState.textContent = text;
+};
+
+const clearCodebookEditor = () => {
+  if (ui.codebookEditCode) ui.codebookEditCode.value = "";
+  if (ui.codebookEditRate) ui.codebookEditRate.value = "";
+  if (ui.codebookEditTitle) ui.codebookEditTitle.value = "";
+  if (ui.codebookEditDocumentation) ui.codebookEditDocumentation.value = "";
+  if (ui.codebookEditCompliance) ui.codebookEditCompliance.value = "";
+  if (ui.saveCodebookBtn) ui.saveCodebookBtn.disabled = true;
+  setCodebookEditorState("Select a CPT code to view or edit details.");
+};
+
+const setCodebookEditor = (code) => {
+  const item = state.codebook.codes.find((entry) => entry.code === code);
+  if (!item) {
+    clearCodebookEditor();
+    return;
+  }
+  state.codebook.selectedCode = item.code;
+
+  if (ui.codebookEditCode) ui.codebookEditCode.value = item.code || "";
+  if (ui.codebookEditRate) ui.codebookEditRate.value = Number(item.medicareRate || 0).toFixed(2);
+  if (ui.codebookEditTitle) ui.codebookEditTitle.value = item.title || "";
+  if (ui.codebookEditDocumentation) ui.codebookEditDocumentation.value = item.documentationNeeded || "";
+  if (ui.codebookEditCompliance) ui.codebookEditCompliance.value = item.complianceNotes || "";
+  if (ui.saveCodebookBtn) ui.saveCodebookBtn.disabled = false;
+
+  setCodebookEditorState(`Editing ${item.code}`);
+};
+
+const renderCodebookTable = () => {
+  if (!ui.codebookTableBody) return;
+
+  const rowsHtml = (state.codebook.filteredCodes || [])
+    .map((item) => {
+      const activeClass = item.code === state.codebook.selectedCode ? " active" : "";
+      return `
+      <tr class="selectable${activeClass}" data-code="${escapeHtml(item.code)}">
+        <td class="table-code-pill">${escapeHtml(item.code)}</td>
+        <td>${escapeHtml(item.title || "-")}</td>
+        <td>${escapeHtml(formatCurrency(item.medicareRate || 0))}</td>
+      </tr>`;
+    })
+    .join("");
+
+  renderTableBody(ui.codebookTableBody, rowsHtml, 3, "No codebook records found.");
+
+  const rows = ui.codebookTableBody.querySelectorAll("tr[data-code]");
+  for (const row of rows) {
+    row.addEventListener("click", () => {
+      const code = row.dataset.code;
+      setCodebookEditor(code);
+      renderCodebookTable();
+    });
+  }
+};
+
+const applyCodebookFilter = () => {
+  const query = String(ui.codebookSearchInput?.value || "").trim().toLowerCase();
+  if (!query) {
+    state.codebook.filteredCodes = [...state.codebook.codes];
+  } else {
+    state.codebook.filteredCodes = state.codebook.codes.filter((item) => {
+      const code = String(item.code || "").toLowerCase();
+      const title = String(item.title || "").toLowerCase();
+      const docs = String(item.documentationNeeded || "").toLowerCase();
+      return code.includes(query) || title.includes(query) || docs.includes(query);
+    });
+  }
+  renderCodebookTable();
+};
+
+const loadCodebook = async () => {
+  const payload = await api("/api/codebook");
+  const codebook = payload?.codebook || {};
+  const codes = Array.isArray(codebook.codes) ? codebook.codes : [];
+
+  state.codebook.meta = payload?.status || codebook.meta || null;
+  state.codebook.codes = [...codes].sort((a, b) => String(a.code).localeCompare(String(b.code)));
+  state.codebook.selectedCode = null;
+
+  setCodebookMeta(state.codebook.meta, state.codebook.codes.length);
+  applyCodebookFilter();
+  clearCodebookEditor();
+  state.loadedViewData.codebook = true;
+};
+
+const saveCodebook = async () => {
+  const code = String(ui.codebookEditCode?.value || "").trim().toUpperCase();
+  if (!code) {
+    addLog("Please select a code before saving.", "warn");
+    return;
+  }
+
+  const rate = Number(ui.codebookEditRate?.value);
+  if (!Number.isFinite(rate) || rate < 0) {
+    addLog("Medicare rate must be a non-negative number.", "warn");
+    return;
+  }
+
+  const body = {
+    title: String(ui.codebookEditTitle?.value || "").trim(),
+    medicareRate: Number(rate.toFixed(2)),
+    documentationNeeded: String(ui.codebookEditDocumentation?.value || "").trim(),
+    complianceNotes: String(ui.codebookEditCompliance?.value || "").trim(),
+  };
+
+  const payload = await api(`/api/codebook/codes/${encodeURIComponent(code)}`, {
+    method: "PUT",
+    body: JSON.stringify(body),
+  });
+
+  const updated = payload?.code;
+  if (!updated?.code) {
+    throw new Error("Invalid codebook update response.");
+  }
+
+  const index = state.codebook.codes.findIndex((item) => item.code === updated.code);
+  if (index >= 0) {
+    state.codebook.codes[index] = updated;
+  } else {
+    state.codebook.codes.push(updated);
+  }
+  state.codebook.codes.sort((a, b) => String(a.code).localeCompare(String(b.code)));
+  state.codebook.meta = payload?.status || state.codebook.meta;
+
+  applyCodebookFilter();
+  setCodebookMeta(state.codebook.meta, state.codebook.codes.length);
+  setCodebookEditor(updated.code);
+  addLog(`CPT code ${updated.code} updated.`, "good");
+};
+
+const setActiveView = async (view, { forceReload = false } = {}) => {
+  if (!viewTitles[view]) return;
+
+  state.currentView = view;
+  if (ui.currentViewLabel) {
+    ui.currentViewLabel.textContent = viewTitles[view];
+  }
+
+  for (const item of ui.navItems) {
+    item.classList.toggle("active", item.dataset.view === view);
+  }
+
+  for (const panel of ui.viewPanels) {
+    panel.classList.toggle("active", panel.id === `view-${view}`);
+  }
+
+  if (view === "past" && (forceReload || !state.loadedViewData.past)) {
+    await loadPastEncounters();
+  }
+  if (view === "revenue") {
+    const prefs = readPreferences();
+    if (forceReload || !state.loadedViewData.revenue || prefs.autoRefreshReports) {
+      await loadRevenueReport();
+    }
+  }
+  if (view === "settings" && (forceReload || !state.loadedViewData.settings)) {
+    await loadSettingsSummary();
+  }
+  if (view === "hipaa" && (forceReload || !state.loadedViewData.hipaa)) {
+    await loadHipaaSettings();
+  }
+  if (view === "codebook" && (forceReload || !state.loadedViewData.codebook)) {
+    await loadCodebook();
+  }
 };
 
 const formatGuidanceText = (guidanceItems) => {
@@ -798,6 +1271,88 @@ const stopEncounter = async () => {
   });
   ui.startBtn.disabled = false;
   addLog("Encounter ended.");
+
+  const prefs = readPreferences();
+  if (prefs.autoOpenPastAfterStop) {
+    setActiveView("past", { forceReload: true }).catch((error) =>
+      addLog(`Unable to open Past Encounters: ${error.message}`, "warn")
+    );
+  }
+};
+
+const bindNavigation = () => {
+  for (const item of ui.navItems) {
+    item.addEventListener("click", (event) => {
+      event.preventDefault();
+      const view = item.dataset.view;
+      setActiveView(view).catch((error) => addLog(`Unable to open ${view}: ${error.message}`, "warn"));
+    });
+  }
+
+  for (const button of ui.jumpViewButtons) {
+    button.addEventListener("click", () => {
+      const view = button.dataset.jumpView;
+      setActiveView(view).catch((error) => addLog(`Unable to open ${view}: ${error.message}`, "warn"));
+    });
+  }
+
+  ui.refreshPastBtn?.addEventListener("click", () => {
+    loadPastEncounters().catch((error) => addLog(`Past encounters refresh failed: ${error.message}`, "warn"));
+  });
+
+  ui.refreshRevenueBtn?.addEventListener("click", () => {
+    loadRevenueReport().catch((error) => addLog(`Revenue report refresh failed: ${error.message}`, "warn"));
+  });
+
+  ui.refreshHipaaBtn?.addEventListener("click", () => {
+    loadHipaaSettings().catch((error) => addLog(`HIPAA status refresh failed: ${error.message}`, "warn"));
+  });
+};
+
+const bindPreferences = () => {
+  applyPreferencesToUi(readPreferences());
+
+  ui.prefCompactTables?.addEventListener("change", () => {
+    setCompactTableMode(Boolean(ui.prefCompactTables?.checked));
+  });
+
+  ui.savePreferencesBtn?.addEventListener("click", () => {
+    const prefs = readPreferencesFromUi();
+    writePreferences(prefs);
+    applyPreferencesToUi(prefs);
+
+    if (ui.preferencesStatus) ui.preferencesStatus.textContent = "Preferences saved";
+    if (ui.preferencesSavedAt) {
+      ui.preferencesSavedAt.textContent = `Saved at ${new Date().toLocaleTimeString()}`;
+    }
+
+    addLog("Preferences updated.", "good");
+  });
+};
+
+const bindCodebook = () => {
+  clearCodebookEditor();
+
+  ui.refreshCodebookBtn?.addEventListener("click", () => {
+    loadCodebook().catch((error) => addLog(`Codebook refresh failed: ${error.message}`, "warn"));
+  });
+
+  ui.codebookSearchInput?.addEventListener("input", () => {
+    applyCodebookFilter();
+  });
+
+  ui.saveCodebookBtn?.addEventListener("click", () => {
+    saveCodebook().catch((error) => addLog(`Codebook save failed: ${error.message}`, "warn"));
+  });
+};
+
+const initializeViews = () => {
+  const prefs = readPreferences();
+  applyPreferencesToUi(prefs);
+  const initialView = viewTitles[prefs.defaultView] ? prefs.defaultView : "live";
+  setActiveView(initialView).catch((error) =>
+    addLog(`Unable to initialize default view: ${error.message}`, "warn")
+  );
 };
 
 ui.startBtn?.addEventListener("click", () => {
@@ -812,4 +1367,7 @@ ui.consentGiven?.addEventListener("change", setConsentBadgeState);
 
 setConsentBadgeState();
 setTranscriptBadge("Idle", false);
-
+bindNavigation();
+bindPreferences();
+bindCodebook();
+initializeViews();

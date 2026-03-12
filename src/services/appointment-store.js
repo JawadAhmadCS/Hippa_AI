@@ -53,6 +53,24 @@ export const createAppointment = ({
 
 export const getAppointment = (appointmentId) => appointments.get(appointmentId);
 
+export const listAppointments = () =>
+  Array.from(appointments.values())
+    .map((appointment) => ({
+      id: appointment.id,
+      patientRef: appointment.patientRef,
+      doctorRef: appointment.doctorRef,
+      insurancePlan: appointment.insurancePlan,
+      visitType: appointment.visitType,
+      consentGiven: appointment.consentGiven,
+      createdAt: appointment.createdAt,
+      transcriptCount: appointment.transcriptSegments.length,
+      suggestionCount: appointment.suggestions.length,
+      icdSuggestionCount: appointment.icdSuggestions.length,
+      projectedRevenue: Number(appointment.revenueTracker?.projectedTotal || 0),
+      earnedNow: Number(appointment.revenueTracker?.earnedNow || 0),
+    }))
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
 export const appendTranscriptSegment = (appointmentId, segment) => {
   const appointment = getAppointment(appointmentId);
   if (!appointment) return null;

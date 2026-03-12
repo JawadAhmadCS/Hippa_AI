@@ -17,6 +17,11 @@ const getCodebook = () => {
   return cached;
 };
 
+const writeCodebook = (codebook) => {
+  fs.writeFileSync(codebookPath, `${JSON.stringify(codebook, null, 2)}\n`, "utf8");
+  cached = codebook;
+};
+
 export const getPayerMultiplier = (insurancePlan) => {
   const payer = String(insurancePlan || "medicare").toLowerCase();
   const codebook = getCodebook();
@@ -26,6 +31,56 @@ export const getPayerMultiplier = (insurancePlan) => {
 export const getCodeById = (code) => {
   const normalizedCode = String(code || "").toUpperCase().trim();
   return getCodebook().codes.find((item) => item.code === normalizedCode) || null;
+};
+
+export const getCodebookSnapshot = () => {
+  const codebook = getCodebook();
+  return JSON.parse(JSON.stringify(codebook));
+};
+
+export const updateCodeById = (code, patch = {}) => {
+  const normalizedCode = String(code || "").toUpperCase().trim();
+  if (!normalizedCode) {
+    throw new Error("Code is required.");
+  }
+
+  const codebook = getCodebook();
+  const index = codebook.codes.findIndex((item) => item.code === normalizedCode);
+  if (index === -1) {
+    return null;
+  }
+
+  const current = codebook.codes[index];
+  const next = { ...current };
+
+  if (Object.prototype.hasOwnProperty.call(patch, "title")) {
+    next.title = String(patch.title || "").trim();
+  }
+
+  if (Object.prototype.hasOwnProperty.call(patch, "medicareRate")) {
+    const parsed = Number(patch.medicareRate);
+    if (!Number.isFinite(parsed) || parsed < 0) {
+      throw new Error("medicareRate must be a non-negative number.");
+    }
+    next.medicareRate = Number(parsed.toFixed(2));
+  }
+
+  if (Object.prototype.hasOwnProperty.call(patch, "documentationNeeded")) {
+    next.documentationNeeded = String(patch.documentationNeeded || "").trim();
+  }
+
+  if (Object.prototype.hasOwnProperty.call(patch, "complianceNotes")) {
+    next.complianceNotes = String(patch.complianceNotes || "").trim();
+  }
+
+  codebook.codes[index] = next;
+  codebook.meta = {
+    ...(codebook.meta || {}),
+    lastUpdated: new Date().toISOString().slice(0, 10),
+  };
+
+  writeCodebook(codebook);
+  return next;
 };
 
 export const searchCodes = (query) => {
@@ -55,4 +110,3 @@ export const getCodebookStatus = () => {
     staleThresholdDays: env.codebookStaleDays,
   };
 };
-
