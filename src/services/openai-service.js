@@ -3,8 +3,11 @@ import { env } from "../config/env.js";
 const analysisSystemInstructions = `
 You are a medical encounter copilot for doctors.
 You produce:
-1) compliance-safe coding opportunities
-2) practical conversation guidance for what doctor should ask or clarify next.
+1) compliance-safe CPT/HCPCS coding opportunities
+2) likely ICD-10 diagnosis suggestions
+3) missed billable component warnings
+4) documentation gap detection with concrete fixes
+5) practical real-time prompts for what doctor should ask next.
 
 Rules:
 - Never upcode.
@@ -12,6 +15,8 @@ Rules:
 - Only suggest codes supported by explicit transcript evidence.
 - Do not suggest baseline E/M code if it is already assumed for the visit.
 - Guidance must be brief, concrete, and phrased as doctor prompts.
+- If a code may be billable but documentation is incomplete, list it under missedBillables and documentationGaps.
+- ICD suggestions should reflect likely clinical assessment language in transcript, not definitive diagnosis if evidence is weak.
 - If evidence is weak, return empty arrays.
 - Return JSON that matches schema.
 `.trim();
@@ -20,9 +25,9 @@ const outputSchema = {
   type: "object",
   additionalProperties: false,
   properties: {
-    suggestions: {
+    cptSuggestions: {
       type: "array",
-      maxItems: 3,
+      maxItems: 5,
       items: {
         type: "object",
         additionalProperties: false,
@@ -36,9 +41,56 @@ const outputSchema = {
         required: ["code", "rationale", "documentationNeeded", "confidence", "evidence"],
       },
     },
-    guidance: {
+    icdSuggestions: {
       type: "array",
       maxItems: 4,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          code: { type: "string" },
+          description: { type: "string" },
+          rationale: { type: "string" },
+          confidence: { type: "number", minimum: 0, maximum: 1 },
+          evidence: { type: "string" },
+        },
+        required: ["code", "description", "rationale", "confidence", "evidence"],
+      },
+    },
+    missedBillables: {
+      type: "array",
+      maxItems: 5,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          component: { type: "string" },
+          potentialCode: { type: "string" },
+          reason: { type: "string" },
+          nextPrompt: { type: "string" },
+          confidence: { type: "number", minimum: 0, maximum: 1 },
+        },
+        required: ["component", "potentialCode", "reason", "nextPrompt", "confidence"],
+      },
+    },
+    documentationGaps: {
+      type: "array",
+      maxItems: 6,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          gap: { type: "string" },
+          severity: { type: "string", enum: ["high", "medium", "low"] },
+          impact: { type: "string" },
+          recommendedPrompt: { type: "string" },
+        },
+        required: ["gap", "severity", "impact", "recommendedPrompt"],
+      },
+    },
+    realTimePrompts: {
+      type: "array",
+      maxItems: 6,
       items: {
         type: "object",
         additionalProperties: false,
@@ -51,7 +103,34 @@ const outputSchema = {
       },
     },
   },
-  required: ["suggestions", "guidance"],
+  required: ["cptSuggestions", "icdSuggestions", "missedBillables", "documentationGaps", "realTimePrompts"],
+};
+
+const emptyStructuredResponse = () => ({
+  cptSuggestions: [],
+  icdSuggestions: [],
+  missedBillables: [],
+  documentationGaps: [],
+  realTimePrompts: [],
+});
+
+const normalizeStructuredOutput = (parsed) => {
+  if (!parsed || typeof parsed !== "object") return emptyStructuredResponse();
+  return {
+    cptSuggestions: Array.isArray(parsed.cptSuggestions)
+      ? parsed.cptSuggestions
+      : Array.isArray(parsed.suggestions)
+        ? parsed.suggestions
+        : [],
+    icdSuggestions: Array.isArray(parsed.icdSuggestions) ? parsed.icdSuggestions : [],
+    missedBillables: Array.isArray(parsed.missedBillables) ? parsed.missedBillables : [],
+    documentationGaps: Array.isArray(parsed.documentationGaps) ? parsed.documentationGaps : [],
+    realTimePrompts: Array.isArray(parsed.realTimePrompts)
+      ? parsed.realTimePrompts
+      : Array.isArray(parsed.guidance)
+        ? parsed.guidance
+        : [],
+  };
 };
 
 const parseStructuredOutput = (result) => {
@@ -65,12 +144,7 @@ const parseStructuredOutput = (result) => {
   };
 
   const fromOutputText = parseCandidate(result?.output_text);
-  if (fromOutputText) {
-    return {
-      suggestions: Array.isArray(fromOutputText.suggestions) ? fromOutputText.suggestions : [],
-      guidance: Array.isArray(fromOutputText.guidance) ? fromOutputText.guidance : [],
-    };
-  }
+  if (fromOutputText) return normalizeStructuredOutput(fromOutputText);
 
   const chunks = result?.output ?? [];
   const text = chunks
@@ -79,21 +153,18 @@ const parseStructuredOutput = (result) => {
     .join(" ")
     .trim();
 
-  if (!text) return { suggestions: [], guidance: [] };
+  if (!text) return emptyStructuredResponse();
 
   const first = text.indexOf("{");
   const last = text.lastIndexOf("}");
   if (first === -1 || last === -1 || last <= first) {
-    return { suggestions: [], guidance: [] };
+    return emptyStructuredResponse();
   }
 
   const parsed = parseCandidate(text.slice(first, last + 1));
-  if (!parsed) return { suggestions: [], guidance: [] };
+  if (!parsed) return emptyStructuredResponse();
 
-  return {
-    suggestions: Array.isArray(parsed.suggestions) ? parsed.suggestions : [],
-    guidance: Array.isArray(parsed.guidance) ? parsed.guidance : [],
-  };
+  return normalizeStructuredOutput(parsed);
 };
 
 export const analyzeTranscriptForSuggestions = async ({
@@ -101,56 +172,73 @@ export const analyzeTranscriptForSuggestions = async ({
   insurancePlan,
   visitType,
   transcriptContext,
+  latestSegment,
   baselineCode = "99213",
   existingCodes = [],
 }) => {
   if (!env.openAiApiKey) {
-    return { model: null, suggestions: [], guidance: [] };
+    const empty = emptyStructuredResponse();
+    return { model: null, suggestions: [], guidance: [], ...empty };
   }
 
-  const response = await fetch("https://api.openai.com/v1/responses", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${env.openAiApiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: env.openAiAnalysisModel,
-      temperature: 0,
-      max_output_tokens: 320,
-      text: {
-        format: {
-          type: "json_schema",
-          name: "encounter_guidance_and_coding",
-          schema: outputSchema,
-          strict: true,
-        },
+  const timeoutController = new AbortController();
+  const timeout = setTimeout(() => timeoutController.abort(), env.aiRequestTimeoutMs);
+
+  let response;
+  try {
+    response = await fetch("https://api.openai.com/v1/responses", {
+      method: "POST",
+      signal: timeoutController.signal,
+      headers: {
+        Authorization: `Bearer ${env.openAiApiKey}`,
+        "Content-Type": "application/json",
       },
-      input: [
-        {
-          role: "system",
-          content: [{ type: "input_text", text: analysisSystemInstructions }],
+      body: JSON.stringify({
+        model: env.openAiAnalysisModel,
+        temperature: 0,
+        max_output_tokens: 520,
+        text: {
+          format: {
+            type: "json_schema",
+            name: "encounter_guidance_and_coding",
+            schema: outputSchema,
+            strict: true,
+          },
         },
-        {
-          role: "user",
-          content: [
-            {
-              type: "input_text",
-              text: [
-                `Appointment ID: ${appointmentId}`,
-                `Insurance Plan: ${insurancePlan}`,
-                `Visit Type: ${visitType}`,
-                `Baseline E/M code already assumed: ${baselineCode}`,
-                `Existing codes already selected: ${existingCodes.join(", ") || "none"}`,
-                "Transcript context (most recent first):",
-                transcriptContext,
-              ].join("\n"),
-            },
-          ],
-        },
-      ],
-    }),
-  });
+        input: [
+          {
+            role: "system",
+            content: [{ type: "input_text", text: analysisSystemInstructions }],
+          },
+          {
+            role: "user",
+            content: [
+              {
+                type: "input_text",
+                text: [
+                  `Appointment ID: ${appointmentId}`,
+                  `Insurance Plan: ${insurancePlan}`,
+                  `Visit Type: ${visitType}`,
+                  `Baseline E/M code already assumed: ${baselineCode}`,
+                  `Existing codes already selected: ${existingCodes.join(", ") || "none"}`,
+                  `Latest segment: ${latestSegment || "n/a"}`,
+                  "Transcript context (most recent first):",
+                  transcriptContext,
+                ].join("\n"),
+              },
+            ],
+          },
+        ],
+      }),
+    });
+  } catch (error) {
+    clearTimeout(timeout);
+    if (error?.name === "AbortError") {
+      throw new Error("OpenAI analysis timed out.");
+    }
+    throw error;
+  }
+  clearTimeout(timeout);
 
   if (!response.ok) {
     const body = await response.text();
@@ -162,8 +250,13 @@ export const analyzeTranscriptForSuggestions = async ({
 
   return {
     model: result?.model || env.openAiAnalysisModel,
-    suggestions: parsed.suggestions,
-    guidance: parsed.guidance,
+    cptSuggestions: parsed.cptSuggestions,
+    icdSuggestions: parsed.icdSuggestions,
+    missedBillables: parsed.missedBillables,
+    documentationGaps: parsed.documentationGaps,
+    realTimePrompts: parsed.realTimePrompts,
+    suggestions: parsed.cptSuggestions,
+    guidance: parsed.realTimePrompts,
   };
 };
 

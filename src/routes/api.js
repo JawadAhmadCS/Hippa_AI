@@ -3,24 +3,19 @@ import multer from "multer";
 import { env, featureFlags } from "../config/env.js";
 import {
   addRecording,
-  addSuggestions,
   appendTranscriptSegment,
   createAppointment,
   getAppointment,
-  getTranscriptContext,
-  setRevenueTracker,
 } from "../services/appointment-store.js";
 import { writeAuditEvent } from "../services/audit-service.js";
 import { getCodebookStatus, searchCodes } from "../services/codebook-service.js";
-import { estimateRevenueTracker } from "../services/revenue-service.js";
-import { analyzeTranscriptForSuggestions } from "../services/openai-service.js";
+import { runLiveAnalysisPipeline } from "../services/live-analysis-service.js";
 import { getAzureSpeechToken, uploadAppointmentAudio } from "../services/azure-service.js";
+import { normalizeIncomingTranscript, parseAwsTranscribeMedicalPayload } from "../services/stt-service.js";
 import {
-  inferRuleBasedGuidance,
-  inferRuleBasedSuggestions,
-  normalizeAiGuidance,
-  normalizeAiSuggestions,
-} from "../services/suggestion-service.js";
+  broadcastAppointmentEvent,
+  subscribeToAppointmentStream,
+} from "../services/streaming-service.js";
 import { normalizeTranscriptSegment } from "../services/transcript-service.js";
 
 const router = express.Router();
@@ -49,11 +44,115 @@ const fireAndForgetAudit = (eventType, payload) => {
   writeAuditEvent(eventType, payload).catch(() => {});
 };
 
-const countWords = (text) =>
-  String(text || "")
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean).length;
+const buildTranscriptResponse = ({ appointment, processedSegment, pipelineResult }) => ({
+  transcriptCount: appointment.transcriptSegments.length,
+  processedSegment: {
+    source: processedSegment.source,
+    rawText: processedSegment.rawText,
+    cleanedText: processedSegment.cleanedText,
+    quality: processedSegment.quality,
+  },
+  newlyAddedSuggestions: pipelineResult.suggestions.newlyAdded,
+  allSuggestions: pipelineResult.suggestions.all,
+  icdSuggestions: pipelineResult.icdSuggestions,
+  guidance: {
+    items: pipelineResult.guidanceItems.slice(0, 6),
+  },
+  missedBillables: pipelineResult.missedBillables,
+  documentation: {
+    gaps: pipelineResult.documentationGaps,
+    improvements: pipelineResult.documentationImprovements,
+  },
+  revenueTracker: pipelineResult.revenueTracker,
+  analysis: pipelineResult.analysis,
+  outputs: {
+    cptSuggestions: pipelineResult.suggestions.all,
+    icdSuggestions: pipelineResult.icdSuggestions.all,
+    missedBillables: pipelineResult.missedBillables,
+    documentationGaps: pipelineResult.documentationGaps,
+    documentationImprovements: pipelineResult.documentationImprovements,
+    realTimePrompts: pipelineResult.guidanceItems,
+    reimbursement: pipelineResult.revenueTracker,
+  },
+});
+
+const processTranscriptSegment = async ({ appointment, rawSegment, source }) => {
+  const baselineCode = "99213";
+  const processedSegment = await normalizeTranscriptSegment({ rawText: rawSegment, source });
+  if (!processedSegment.cleanedText) {
+    throw new Error("Transcript segment could not be processed.");
+  }
+
+  const storedSegment = appendTranscriptSegment(appointment.id, {
+    text: processedSegment.cleanedText,
+    rawText: processedSegment.rawText,
+    cleanedText: processedSegment.cleanedText,
+    quality: processedSegment.quality,
+    source,
+  });
+
+  const acceptedPayload = {
+    appointmentId: appointment.id,
+    transcriptCount: appointment.transcriptSegments.length,
+    segment: {
+      source,
+      rawText: storedSegment?.rawText ?? processedSegment.rawText,
+      cleanedText: storedSegment?.cleanedText ?? processedSegment.cleanedText,
+      quality: storedSegment?.quality ?? processedSegment.quality,
+    },
+    at: new Date().toISOString(),
+  };
+  broadcastAppointmentEvent(appointment.id, "transcript.accepted", acceptedPayload);
+
+  const pipelineResult = await runLiveAnalysisPipeline({
+    appointment,
+    latestSegment: processedSegment.cleanedText,
+    baselineCode,
+  });
+
+  const payload = buildTranscriptResponse({
+    appointment,
+    processedSegment: {
+      source,
+      rawText: storedSegment?.rawText ?? rawSegment,
+      cleanedText: storedSegment?.cleanedText ?? processedSegment.cleanedText,
+      quality: storedSegment?.quality ?? processedSegment.quality,
+    },
+    pipelineResult,
+  });
+
+  broadcastAppointmentEvent(appointment.id, "analysis.update", {
+    ...payload,
+    appointmentId: appointment.id,
+    at: new Date().toISOString(),
+  });
+
+  const newlyAddedCpt = payload.newlyAddedSuggestions || [];
+  const newlyAddedIcd = payload.icdSuggestions?.newlyAdded || [];
+  fireAndForgetAudit("appointment.transcript.segment", {
+    appointmentId: appointment.id,
+    doctorRef: appointment.doctorRef,
+    source,
+    rawText: rawSegment,
+    processedText: processedSegment.cleanedText,
+    quality: processedSegment.quality,
+    ruleGeneratedCodes: newlyAddedCpt
+      .filter((item) => item.source === "rule-engine")
+      .map((item) => item.code),
+    aiGeneratedCodes: newlyAddedCpt
+      .filter((item) => item.source === "openai-analysis")
+      .map((item) => item.code),
+    icdCodesAdded: newlyAddedIcd.map((item) => item.code),
+    missedBillablesCount: payload.missedBillables.length,
+    documentationGapCount: payload.documentation.gaps.length,
+    guidanceCount: payload.guidance.items.length,
+    aiModel: payload.analysis?.model,
+    aiSkipReason: payload.analysis?.skipReason,
+    latency: payload.analysis?.latency,
+  });
+
+  return payload;
+};
 
 router.get("/health", (_request, response) => {
   response.json({ ok: true, at: new Date().toISOString() });
@@ -114,6 +213,36 @@ router.get(
 );
 
 router.get(
+  "/appointments/:appointmentId/stream",
+  withAsync(async (request, response) => {
+    const appointment = ensureAppointment(request.params.appointmentId, response);
+    if (!appointment) return;
+
+    response.setHeader("Content-Type", "text/event-stream");
+    response.setHeader("Cache-Control", "no-cache, no-transform");
+    response.setHeader("Connection", "keep-alive");
+    response.flushHeaders?.();
+
+    const unsubscribe = subscribeToAppointmentStream(appointment.id, response);
+    response.write(
+      `event: connected\ndata: ${JSON.stringify({
+        appointmentId: appointment.id,
+        at: new Date().toISOString(),
+      })}\n\n`
+    );
+
+    const heartbeat = setInterval(() => {
+      response.write(`event: ping\ndata: {"at":"${new Date().toISOString()}"}\n\n`);
+    }, 15000);
+
+    request.on("close", () => {
+      clearInterval(heartbeat);
+      unsubscribe();
+    });
+  })
+);
+
+router.get(
   "/azure/speech-token",
   withAsync(async (_request, response) => {
     const token = await getAzureSpeechToken();
@@ -132,141 +261,85 @@ router.post(
       return;
     }
 
-    const rawSegment = String(request.body.segment || "").trim();
-    if (!rawSegment) {
+    const normalized = normalizeIncomingTranscript(request.body);
+    if (!normalized.segment) {
       response.status(400).json({ error: "Transcript segment is required." });
       return;
     }
 
-    const baselineCode = "99213";
-    const source = request.body.source || "unknown";
+    const payload = await processTranscriptSegment({
+      appointment,
+      rawSegment: normalized.segment,
+      source: normalized.source,
+    });
+    response.json(payload);
+  })
+);
 
-    const processedSegment = await normalizeTranscriptSegment({ rawText: rawSegment, source });
-    if (!processedSegment.cleanedText) {
-      response.status(400).json({ error: "Transcript segment could not be processed." });
+router.post(
+  "/appointments/:appointmentId/transcript/aws-transcribe",
+  withAsync(async (request, response) => {
+    const appointment = ensureAppointment(request.params.appointmentId, response);
+    if (!appointment) return;
+
+    if (!appointment.consentGiven) {
+      response.status(403).json({ error: "Consent is required before recording/transcription." });
       return;
     }
 
-    const storedSegment = appendTranscriptSegment(appointment.id, {
-      text: processedSegment.cleanedText,
-      rawText: processedSegment.rawText,
-      cleanedText: processedSegment.cleanedText,
-      quality: processedSegment.quality,
-      source,
-    });
-
-    const transcriptContext = getTranscriptContext(appointment.id, 6);
-    const existingCodes = new Set(appointment.suggestions.map((item) => item.code));
-
-    const ruleSuggestions = inferRuleBasedSuggestions({
-      segment: transcriptContext,
-      existingCodes,
-    }).filter((item) => item.code !== baselineCode);
-
-    const mergedRule = addSuggestions(appointment.id, ruleSuggestions, "rule-engine");
-
-    const guidanceItems = inferRuleBasedGuidance({ segment: transcriptContext });
-
-    let aiModel = null;
-    let mergedAi = { newlyAdded: [] };
-    let aiSkipReason = null;
-
-    if (featureFlags.hasOpenAi) {
-      const segmentWordCount = countWords(processedSegment.cleanedText);
-      const now = Date.now();
-      const lastAiRunAt = Number(appointment.analysisState?.lastAiRunAt || 0);
-      const enoughWords = segmentWordCount >= env.aiMinWordsForAnalysis;
-      const enoughTime = now - lastAiRunAt >= env.aiMinIntervalMs;
-
-      if (!enoughWords) {
-        aiSkipReason = "segment-too-short";
-      } else if (!enoughTime) {
-        aiSkipReason = "throttled";
-      } else {
-        appointment.analysisState = {
-          ...(appointment.analysisState || {}),
-          lastAiRunAt: now,
-        };
-
-        try {
-          const aiResult = await analyzeTranscriptForSuggestions({
-            appointmentId: appointment.id,
-            insurancePlan: appointment.insurancePlan,
-            visitType: appointment.visitType,
-            transcriptContext,
-            baselineCode,
-            existingCodes: appointment.suggestions.map((item) => item.code),
-          });
-
-          aiModel = aiResult.model;
-          const normalizedAi = normalizeAiSuggestions(aiResult.suggestions)
-            .filter((item) => item.code !== baselineCode)
-            .filter((item) => Number(item.confidence || 0) >= 0.62);
-
-          mergedAi = addSuggestions(appointment.id, normalizedAi, "openai-analysis") || {
-            newlyAdded: [],
-          };
-
-          const aiGuidance = normalizeAiGuidance(aiResult.guidance);
-          const existingPromptSet = new Set(guidanceItems.map((item) => item.prompt.toLowerCase()));
-          for (const suggestion of aiGuidance) {
-            const key = suggestion.prompt.toLowerCase();
-            if (!existingPromptSet.has(key)) {
-              guidanceItems.push(suggestion);
-              existingPromptSet.add(key);
-            }
-          }
-        } catch {
-          aiSkipReason = "openai-error";
-        }
-      }
+    const parsed = parseAwsTranscribeMedicalPayload(request.body || {});
+    if (!parsed.segments.length) {
+      response.status(202).json({
+        accepted: false,
+        reason: "no-usable-aws-segments",
+        stt: { provider: parsed.provider, segmentsReceived: 0 },
+      });
+      return;
     }
 
-    const tracker = estimateRevenueTracker({
-      insurancePlan: appointment.insurancePlan,
-      baselineCode,
-      suggestions: appointment.suggestions,
-    });
-    setRevenueTracker(appointment.id, tracker);
+    const finalSegments = parsed.segments.filter((item) => !item.isPartial);
+    if (!finalSegments.length) {
+      broadcastAppointmentEvent(appointment.id, "transcript.partial", {
+        appointmentId: appointment.id,
+        provider: parsed.provider,
+        partialText: parsed.segments[parsed.segments.length - 1]?.text || "",
+        at: new Date().toISOString(),
+      });
 
-    fireAndForgetAudit("appointment.transcript.segment", {
-      appointmentId: appointment.id,
-      doctorRef: appointment.doctorRef,
-      source,
-      rawText: rawSegment,
-      processedText: processedSegment.cleanedText,
-      quality: processedSegment.quality,
-      ruleGeneratedCodes: mergedRule?.newlyAdded?.map((item) => item.code) ?? [],
-      aiGeneratedCodes: mergedAi?.newlyAdded?.map((item) => item.code) ?? [],
-      guidanceCount: guidanceItems.length,
-      aiModel,
-      aiSkipReason,
-    });
+      response.status(202).json({
+        accepted: false,
+        partial: true,
+        reason: "aws-partial-only",
+        stt: {
+          provider: parsed.provider,
+          segmentsReceived: parsed.segments.length,
+        },
+      });
+      return;
+    }
 
-    const analysisMode = featureFlags.hasOpenAi
-      ? aiModel
-        ? "rule-engine+openai"
-        : "rule-engine-throttled"
-      : "rule-engine-only";
+    const processAllFinal =
+      String(request.query.processAllFinal || request.body.processAllFinal || "false")
+        .trim()
+        .toLowerCase() === "true";
+
+    const selected = processAllFinal ? finalSegments : [finalSegments[finalSegments.length - 1]];
+    let latestPayload = null;
+
+    for (const segment of selected) {
+      latestPayload = await processTranscriptSegment({
+        appointment,
+        rawSegment: segment.text,
+        source: parsed.provider,
+      });
+    }
 
     response.json({
-      transcriptCount: appointment.transcriptSegments.length,
-      processedSegment: {
-        source,
-        rawText: storedSegment?.rawText ?? rawSegment,
-        cleanedText: storedSegment?.cleanedText ?? processedSegment.cleanedText,
-        quality: storedSegment?.quality ?? processedSegment.quality,
-      },
-      newlyAddedSuggestions: [...(mergedRule?.newlyAdded ?? []), ...(mergedAi?.newlyAdded ?? [])],
-      allSuggestions: appointment.suggestions,
-      guidance: {
-        items: guidanceItems.slice(0, 6),
-      },
-      revenueTracker: appointment.revenueTracker,
-      analysis: {
-        model: aiModel,
-        mode: analysisMode,
-        skipReason: aiSkipReason,
+      ...(latestPayload || {}),
+      stt: {
+        provider: parsed.provider,
+        segmentsReceived: parsed.segments.length,
+        processedFinalSegments: selected.length,
       },
     });
   })
@@ -322,6 +395,12 @@ router.get(
         transcriptCleanupAiEnabled: featureFlags.hasOpenAi && env.enableAiTranscriptCleanup,
         azureSpeechConfigured: featureFlags.hasAzureSpeech,
         azureBlobConfigured: featureFlags.hasAzureBlobStorage,
+        awsTranscribeMedicalIngestion: true,
+        realtimeStreamingConfigured: true,
+      },
+      latencyTargets: {
+        aiTargetMs: env.aiTargetLatencyMs,
+        aiRequestTimeoutMs: env.aiRequestTimeoutMs,
       },
       accessModel: {
         primaryUser: "doctor",
@@ -338,4 +417,3 @@ router.get(
 );
 
 export default router;
-

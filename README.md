@@ -12,13 +12,16 @@ HIPAA-first medical AI assistant prototype for live doctor-patient encounters.
 ## Core Features
 
 - Live speech-to-text transcription (Azure Speech token flow + browser fallback)
+- AWS Transcribe Medical transcript event ingestion (backend endpoint)
 - Transcript cleanup for noisy ASR lines before analysis
 - Live doctor guidance prompts for what to ask next during appointment
+- ICD-10 suggestion, documentation gap detection, and missed billable component alerts
 - E/M guardrail: baseline code is not double-counted in compliant opportunity revenue
 - Transcript analysis with OpenAI text models (no WebRTC realtime dependency)
 - Compliant CPT/HCPCS opportunity suggestions
 - Revenue projection with insurance multiplier + Medicare fallback, including current billable code breakdown
 - Audio recording storage (Azure Blob + local fallback)
+- SSE streaming channel for real-time backend analysis updates
 
 ## Important Scope
 
@@ -92,6 +95,9 @@ Also used:
 - `ENABLE_AI_TRANSCRIPT_CLEANUP` (default `false`)
 - `AI_MIN_ANALYSIS_INTERVAL_MS` (default `3500`)
 - `AI_MIN_WORDS_FOR_ANALYSIS` (default `6`)
+- `AI_REQUEST_TIMEOUT_MS` (default `2800`)
+- `AI_TARGET_LATENCY_MS` (default `3000`)
+- `AI_CONTEXT_WINDOW_SEGMENTS` (default `6`)
 - `OPENAI_FINAL_REVIEW_MODEL` (default `gpt-4.1`)
 - `PORT` (default `8787`)
 - `AZURE_STORAGE_CONTAINER` (default `appointment-audio`)
@@ -104,6 +110,8 @@ Also used:
 - `GET /api/appointments/:id` encounter status
 - `GET /api/azure/speech-token` Azure speech token for live transcription
 - `POST /api/appointments/:id/transcript` ingest transcript + cleanup + coding + doctor guidance + live revenue/code breakdown
+- `POST /api/appointments/:id/transcript/aws-transcribe` ingest AWS Transcribe Medical `TranscriptEvent` payloads
+- `GET /api/appointments/:id/stream` SSE live events (`transcript.accepted`, `analysis.update`, `transcript.partial`)
 - `POST /api/appointments/:id/audio` upload encounter audio
 - `GET /api/compliance/status` integration, access model, and codebook freshness
 - `GET /api/codes/search?q=` CPT lookup

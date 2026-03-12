@@ -28,6 +28,14 @@ export const createAppointment = ({
     createdAt: new Date().toISOString(),
     transcriptSegments: [],
     suggestions: [],
+    icdSuggestions: [],
+    liveInsights: {
+      missedBillables: [],
+      documentationGaps: [],
+      documentationImprovements: [],
+      realTimePrompts: [],
+      latency: {},
+    },
     revenueTracker: {
       baseline: 0,
       compliantOpportunity: 0,
@@ -90,11 +98,41 @@ export const addSuggestions = (appointmentId, suggestions, source) => {
   };
 };
 
+export const addIcdSuggestions = (appointmentId, suggestions, source) => {
+  const appointment = getAppointment(appointmentId);
+  if (!appointment) return null;
+
+  const existingCodes = new Set(appointment.icdSuggestions.map((item) => item.code));
+  const cleanSuggestions = suggestions
+    .filter((item) => item?.code && !existingCodes.has(item.code))
+    .map((item) => ({
+      ...item,
+      source,
+      createdAt: new Date().toISOString(),
+    }));
+
+  appointment.icdSuggestions.push(...cleanSuggestions);
+  return {
+    appointment,
+    newlyAdded: cleanSuggestions,
+  };
+};
+
 export const setRevenueTracker = (appointmentId, tracker) => {
   const appointment = getAppointment(appointmentId);
   if (!appointment) return null;
   appointment.revenueTracker = tracker;
   return appointment;
+};
+
+export const setLiveInsights = (appointmentId, insights) => {
+  const appointment = getAppointment(appointmentId);
+  if (!appointment) return null;
+  appointment.liveInsights = {
+    ...(appointment.liveInsights || {}),
+    ...(insights || {}),
+  };
+  return appointment.liveInsights;
 };
 
 export const addRecording = (appointmentId, recordingInfo) => {

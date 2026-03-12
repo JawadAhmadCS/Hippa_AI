@@ -12,6 +12,7 @@ const state = {
   interimTranscriptNode: null,
   lastAssistantMessage: "",
   lastThrottleLogAt: 0,
+  suggestionStream: null,
 };
 
 const ui = {
@@ -161,6 +162,13 @@ const addAssistantMessage = (text) => {
   state.lastAssistantMessage = cleaned;
 };
 
+const closeSuggestionStream = () => {
+  if (state.suggestionStream) {
+    state.suggestionStream.close();
+    state.suggestionStream = null;
+  }
+};
+
 const renderSuggestions = (suggestions) => {
   ui.suggestionList.innerHTML = "";
   if (!suggestions.length) {
@@ -303,7 +311,7 @@ const formatGuidanceText = (guidanceItems) => {
     .join(" | ");
 };
 
-const summarizeAssistantUpdate = (suggestions, guidanceItems, model, tracker) => {
+const summarizeAssistantUpdate = (suggestions, guidanceItems, model, tracker, missedBillables = []) => {
   const prefix = model ? `AI analysis (${model})` : "Assistant";
   const codePart = suggestions.length
     ? `Codes: ${suggestions.slice(0, 3).map((s) => `${s.code}: ${s.rationale || "supported"}`).join(" | ")}`
@@ -315,8 +323,45 @@ const summarizeAssistantUpdate = (suggestions, guidanceItems, model, tracker) =>
     : "Doctor next prompts: continue collecting encounter details (duration, severity, and plan).";
 
   const revenuePart = `Estimated earned now: $${safeNumber(tracker?.earnedNow ?? tracker?.projectedTotal)}`;
+  const missedPart = missedBillables.length
+    ? `Missed billables to verify: ${missedBillables.slice(0, 2).map((item) => item.potentialCode).join(", ")}`
+    : "Missed billables: none flagged.";
 
-  return `${prefix}: ${codePart} ${guidancePart} ${revenuePart}`;
+  return `${prefix}: ${codePart} ${guidancePart} ${missedPart} ${revenuePart}`;
+};
+
+const applyAnalysisPayload = (payload) => {
+  if (!payload) return;
+
+  const transcriptCount = Number(payload.transcriptCount || 0);
+  const isNewest = transcriptCount > state.lastServerTranscriptCount;
+  if (!isNewest) return;
+
+  state.lastServerTranscriptCount = transcriptCount;
+  renderSuggestions(payload.allSuggestions || []);
+  renderRevenueTracker(payload.revenueTracker || {});
+  renderGuidance(payload.guidance?.items || []);
+  renderBillableCodes(payload.revenueTracker?.billableCodes || []);
+
+  addAssistantMessage(
+    summarizeAssistantUpdate(
+      payload.newlyAddedSuggestions || [],
+      payload.guidance?.items || [],
+      payload.analysis?.model,
+      payload.revenueTracker,
+      payload.missedBillables || []
+    )
+  );
+
+  if (payload.analysis?.mode === "rule-engine+openai") {
+    addLog(`Analyzed by ${payload.analysis.model || "OpenAI"}`, "good");
+  } else if (payload.analysis?.mode === "rule-engine-throttled") {
+    const now = Date.now();
+    if (now - state.lastThrottleLogAt > 15000) {
+      addLog("AI analysis throttled for faster live transcript updates.", "info");
+      state.lastThrottleLogAt = now;
+    }
+  }
 };
 
 const submitTranscriptSegment = async (text, source) => {
@@ -326,38 +371,31 @@ const submitTranscriptSegment = async (text, source) => {
     method: "POST",
     body: JSON.stringify({ segment: text, source }),
   });
-
-  const transcriptCount = Number(payload.transcriptCount || 0);
-  const isNewest = transcriptCount >= state.lastServerTranscriptCount;
-
-  if (isNewest) {
-    state.lastServerTranscriptCount = transcriptCount;
-    renderSuggestions(payload.allSuggestions || []);
-    renderRevenueTracker(payload.revenueTracker || {});
-    addAssistantMessage(
-      summarizeAssistantUpdate(
-        payload.newlyAddedSuggestions || [],
-        payload.guidance?.items || [],
-        payload.analysis?.model,
-        payload.revenueTracker
-      )
-    );
-
-    renderGuidance(payload.guidance?.items || []);
-    renderBillableCodes(payload.revenueTracker?.billableCodes || []);
-
-    if (payload.analysis?.mode === "rule-engine+openai") {
-      addLog(`Analyzed by ${payload.analysis.model || "OpenAI"}`, "good");
-    } else if (payload.analysis?.mode === "rule-engine-throttled") {
-      const now = Date.now();
-      if (now - state.lastThrottleLogAt > 15000) {
-        addLog("AI analysis throttled for faster live transcript updates.", "info");
-        state.lastThrottleLogAt = now;
-      }
-    }
-  }
+  applyAnalysisPayload(payload);
 
   return payload;
+};
+
+const startSuggestionStream = () => {
+  if (!state.appointment) return;
+  closeSuggestionStream();
+
+  const stream = new EventSource(`/api/appointments/${state.appointment.id}/stream`);
+  stream.addEventListener("analysis.update", (event) => {
+    const payload = JSON.parse(event.data || "{}");
+    applyAnalysisPayload(payload);
+  });
+  stream.addEventListener("transcript.partial", (event) => {
+    const payload = JSON.parse(event.data || "{}");
+    const text = String(payload.partialText || "").trim();
+    if (text) setInterimTranscript(payload.provider || "stt-partial", text);
+  });
+  stream.onerror = () => {
+    addLog("Live analysis stream disconnected; continuing with direct sync.", "warn");
+    closeSuggestionStream();
+  };
+
+  state.suggestionStream = stream;
 };
 
 const shouldSkipDuplicateSegment = (text) => {
@@ -633,6 +671,7 @@ const startEncounter = async () => {
   addLog(`Doctor ${doctorRef} started appointment ${state.appointment.id}.`, "good");
   ui.sessionBadge.textContent = `Live: ${state.appointment.id}`;
   ui.sessionBadge.classList.add("active");
+  startSuggestionStream();
 
   state.micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
   startRecording();
@@ -648,6 +687,7 @@ const stopEncounter = async () => {
   ui.stopBtn.disabled = true;
   state.encounterActive = false;
   clearInterimTranscript();
+  closeSuggestionStream();
 
   if (state.speechRecognizer) {
     state.speechRecognizer.stopContinuousRecognitionAsync(

@@ -47,6 +47,11 @@ const RULES = [
 ];
 
 const clampConfidence = (value) => Math.max(0, Math.min(0.98, Number(value) || 0));
+const clampPriority = (value) => {
+  const normalized = String(value || "").toLowerCase();
+  if (normalized === "high" || normalized === "medium" || normalized === "low") return normalized;
+  return "medium";
+};
 
 const makeSuggestion = (code, rationale, evidenceText, baseConfidence = 0.64) => {
   const cpt = getCodeById(code);
@@ -61,6 +66,39 @@ const makeSuggestion = (code, rationale, evidenceText, baseConfidence = 0.64) =>
     confidence: clampConfidence(baseConfidence),
   };
 };
+
+const ICD_RULES = [
+  {
+    code: "I10",
+    description: "Essential (primary) hypertension",
+    keywords: ["hypertension", "blood pressure", "bp", "150"],
+    rationale: "Encounter discussion indicates chronic blood pressure management.",
+  },
+  {
+    code: "R53.83",
+    description: "Other fatigue",
+    keywords: ["fatigue", "tired", "weak"],
+    rationale: "Patient fatigue symptoms were discussed.",
+  },
+  {
+    code: "Z72.0",
+    description: "Tobacco use",
+    keywords: ["tobacco", "smoking", "nicotine"],
+    rationale: "Tobacco use or counseling language appears in transcript.",
+  },
+  {
+    code: "F32.A",
+    description: "Depression, unspecified",
+    keywords: ["depression", "phq", "sad", "low mood"],
+    rationale: "Depression screening or symptoms were discussed.",
+  },
+  {
+    code: "R03.0",
+    description: "Elevated blood-pressure reading, without diagnosis of hypertension",
+    keywords: ["elevated blood pressure", "high reading", "blood pressure"],
+    rationale: "Encounter includes elevated blood pressure discussion and follow-up.",
+  },
+];
 
 export const inferRuleBasedSuggestions = ({ segment, existingCodes }) => {
   const text = String(segment || "").toLowerCase();
@@ -80,6 +118,27 @@ export const inferRuleBasedSuggestions = ({ segment, existingCodes }) => {
     .filter(Boolean);
 };
 
+export const inferRuleBasedIcdSuggestions = ({ segment, existingIcd = new Set() }) => {
+  const text = String(segment || "").toLowerCase();
+  if (!text) return [];
+
+  return ICD_RULES.filter((rule) => {
+    const hits = rule.keywords.filter((keyword) => text.includes(keyword)).length;
+    return hits >= 2 || (hits >= 1 && rule.code === "I10");
+  })
+    .filter((rule) => !existingIcd.has(rule.code))
+    .map((rule) => {
+      const hits = rule.keywords.filter((keyword) => text.includes(keyword)).length;
+      return {
+        code: rule.code,
+        description: rule.description,
+        rationale: rule.rationale,
+        confidence: clampConfidence(0.5 + hits * 0.16),
+        evidence: String(segment || "").slice(0, 240),
+      };
+    });
+};
+
 export const normalizeAiSuggestions = (items) => {
   if (!Array.isArray(items)) return [];
 
@@ -96,6 +155,66 @@ export const normalizeAiSuggestions = (items) => {
         documentationNeeded: String(item?.documentationNeeded || cpt.documentationNeeded),
         complianceNotes: cpt.complianceNotes,
         confidence: clampConfidence(item?.confidence ?? 0.55),
+      };
+    })
+    .filter(Boolean);
+};
+
+const isValidIcdCode = (code) => /^[A-TV-Z][0-9][0-9AB](\.[0-9A-TV-Z]{1,4})?$/.test(code);
+
+export const normalizeAiIcdSuggestions = (items) => {
+  if (!Array.isArray(items)) return [];
+
+  return items
+    .map((item) => {
+      const code = String(item?.code || "").toUpperCase().trim();
+      if (!isValidIcdCode(code)) return null;
+      return {
+        code,
+        description: String(item?.description || "ICD-10 diagnosis suggestion"),
+        rationale: String(item?.rationale || "AI diagnosis suggestion from transcript evidence."),
+        confidence: clampConfidence(item?.confidence ?? 0.5),
+        evidence: String(item?.evidence || ""),
+      };
+    })
+    .filter(Boolean);
+};
+
+export const normalizeAiMissedBillables = (items) => {
+  if (!Array.isArray(items)) return [];
+
+  return items
+    .map((item) => {
+      const component = String(item?.component || "").trim();
+      const potentialCode = String(item?.potentialCode || "").toUpperCase().trim();
+      const reason = String(item?.reason || "").trim();
+      const nextPrompt = String(item?.nextPrompt || "").trim();
+      if (!component || !potentialCode || !reason || !nextPrompt) return null;
+      return {
+        component,
+        potentialCode,
+        reason,
+        nextPrompt,
+        confidence: clampConfidence(item?.confidence ?? 0.55),
+      };
+    })
+    .filter(Boolean);
+};
+
+export const normalizeAiDocumentationGaps = (items) => {
+  if (!Array.isArray(items)) return [];
+
+  return items
+    .map((item) => {
+      const gap = String(item?.gap || "").trim();
+      const impact = String(item?.impact || "").trim();
+      const recommendedPrompt = String(item?.recommendedPrompt || "").trim();
+      if (!gap || !recommendedPrompt) return null;
+      return {
+        gap,
+        impact,
+        severity: clampPriority(item?.severity),
+        recommendedPrompt,
       };
     })
     .filter(Boolean);
@@ -169,4 +288,142 @@ export const normalizeAiGuidance = (items) => {
       return { prompt, rationale, priority };
     })
     .filter(Boolean);
+};
+
+const keywordCoverage = (text, terms) => terms.filter((term) => text.includes(term)).length;
+
+export const detectRuleBasedMissedBillables = ({
+  segment,
+  suggestions = [],
+  baselineCode = "99213",
+}) => {
+  const text = String(segment || "").toLowerCase();
+  if (!text) return [];
+
+  const presentCodes = new Set(
+    suggestions.map((item) => String(item?.code || "").toUpperCase().trim()).filter(Boolean)
+  );
+
+  const missed = [];
+  const maybePush = (item) => {
+    if (!item || presentCodes.has(item.potentialCode)) return;
+    missed.push(item);
+  };
+
+  if (keywordCoverage(text, ["tobacco", "smoking", "cessation"]) >= 2) {
+    maybePush({
+      component: "Tobacco cessation counseling duration may be undocumented",
+      potentialCode: "99406",
+      reason: "Counseling language appears, but billable counseling time/details may be missing.",
+      nextPrompt: "Document tobacco counseling duration and key counseling points.",
+      confidence: 0.72,
+    });
+  }
+
+  if (keywordCoverage(text, ["depression", "phq", "screening"]) >= 2) {
+    maybePush({
+      component: "Depression screening score may be missing",
+      potentialCode: "G0444",
+      reason: "Screening discussion exists but validated tool and score may not be documented.",
+      nextPrompt: "Record the validated screening instrument and numeric score.",
+      confidence: 0.7,
+    });
+  }
+
+  if (keywordCoverage(text, ["ecg", "ekg", "electrocardiogram"]) >= 1) {
+    maybePush({
+      component: "ECG interpretation/report completeness",
+      potentialCode: "93000",
+      reason: "ECG mention appears; full interpretation/report may be required for billing.",
+      nextPrompt: "Ensure ECG tracing, interpretation, and signed report are documented.",
+      confidence: 0.66,
+    });
+  }
+
+  if (keywordCoverage(text, ["blood pressure", "medication", "adjust", "hypertension"]) >= 3) {
+    const emPresent = presentCodes.has("99214");
+    if (!emPresent && baselineCode !== "99214") {
+      maybePush({
+        component: "Moderate MDM criteria may not be fully documented",
+        potentialCode: "99214",
+        reason: "Medication management complexity suggests possible E/M upgrade if criteria are met.",
+        nextPrompt: "Document risk, data reviewed, and management complexity clearly.",
+        confidence: 0.64,
+      });
+    }
+  }
+
+  return missed.slice(0, 5);
+};
+
+export const detectRuleBasedDocumentationGaps = ({ segment }) => {
+  const text = String(segment || "").toLowerCase();
+  if (!text) return [];
+
+  const gaps = [];
+
+  if (containsAny(text, ["blood pressure", "hypertension"])) {
+    if (!containsAny(text, ["home", "readings", "trend"])) {
+      gaps.push({
+        gap: "Home blood pressure trend is missing",
+        severity: "high",
+        impact: "Limits clinical justification for medication changes and follow-up intensity.",
+        recommendedPrompt: "Please share home blood pressure readings from the past week.",
+      });
+    }
+    if (!containsAny(text, ["adherence", "missed dose", "side effect"])) {
+      gaps.push({
+        gap: "Medication adherence and side effects are not explicit",
+        severity: "high",
+        impact: "Weakens MDM and safety documentation for treatment adjustment.",
+        recommendedPrompt: "Have you missed doses, and any side effects from current medication?",
+      });
+    }
+  }
+
+  if (containsAny(text, ["blood test", "lab", "cbc", "thyroid"]) && !containsAny(text, ["because", "due to", "indication"])) {
+    gaps.push({
+      gap: "Clinical indication for lab order is unclear",
+      severity: "medium",
+      impact: "Medical necessity may not be defensible for payer review.",
+      recommendedPrompt: "Document the specific symptom/risk driving each lab order.",
+    });
+  }
+
+  if (containsAny(text, ["tobacco", "smoking", "cessation"]) && !containsAny(text, ["minute", "minutes"])) {
+    gaps.push({
+      gap: "Counseling time not documented",
+      severity: "medium",
+      impact: "Prevents compliant billing for time-based counseling codes.",
+      recommendedPrompt: "Record counseling duration and intervention details.",
+    });
+  }
+
+  return gaps.slice(0, 6);
+};
+
+export const buildDocumentationImprovements = ({
+  guidance = [],
+  documentationGaps = [],
+  missedBillables = [],
+}) => {
+  const suggestions = [];
+  const pushUnique = (text, priority = "medium") => {
+    const normalized = String(text || "").trim();
+    if (!normalized) return;
+    if (suggestions.some((item) => item.text.toLowerCase() === normalized.toLowerCase())) return;
+    suggestions.push({ text: normalized, priority: clampPriority(priority) });
+  };
+
+  for (const gap of documentationGaps) {
+    pushUnique(gap.recommendedPrompt, gap.severity);
+  }
+  for (const missing of missedBillables) {
+    pushUnique(missing.nextPrompt, "high");
+  }
+  for (const item of guidance) {
+    pushUnique(item.prompt, item.priority);
+  }
+
+  return suggestions.slice(0, 8);
 };
