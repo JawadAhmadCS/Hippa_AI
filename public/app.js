@@ -34,7 +34,6 @@ const ui = {
   payerMultiplier: document.getElementById("payerMultiplier"),
   guidanceList: document.getElementById("guidanceList"),
   billableCodesList: document.getElementById("billableCodesList"),
-  compliancePanel: document.getElementById("compliancePanel"),
   eventLog: document.getElementById("eventLog"),
   sessionBadge: document.getElementById("sessionBadge"),
   waveform: document.getElementById("waveform"),
@@ -51,6 +50,11 @@ const escapeHtml = (value) =>
     .replaceAll("'", "&#39;");
 
 const addLog = (line, level = "info") => {
+  if (!ui.eventLog) {
+    const fn = level === "warn" ? console.warn : console.log;
+    fn(line);
+    return;
+  }
   const at = new Date().toLocaleTimeString();
   const node = document.createElement("div");
   node.className = `log-entry ${level}`;
@@ -261,43 +265,6 @@ const api = async (path, options = {}) => {
     throw new Error(data.error || `Request failed: ${response.status}`);
   }
   return data;
-};
-
-const renderComplianceItem = (label, ok) => {
-  const row = document.createElement("div");
-  row.className = `compliance-item ${ok ? "ok" : "warn"}`;
-  row.innerHTML = `<span class="dot"></span><span>${escapeHtml(label)}: ${ok ? "Configured" : "Missing"}</span>`;
-  return row;
-};
-
-const refreshComplianceStatus = async () => {
-  const status = await api("/api/compliance/status");
-  ui.compliancePanel.innerHTML = "";
-  ui.compliancePanel.appendChild(
-    renderComplianceItem("OpenAI Analysis", status.integrations?.openAiAnalysisConfigured)
-  );
-  ui.compliancePanel.appendChild(
-    renderComplianceItem("Transcript Cleanup (Deterministic)", status.integrations?.transcriptCleanupConfigured)
-  );
-  ui.compliancePanel.appendChild(
-    renderComplianceItem("Transcript Cleanup (AI)", status.integrations?.transcriptCleanupAiEnabled)
-  );
-  ui.compliancePanel.appendChild(
-    renderComplianceItem("Azure Speech", status.integrations?.azureSpeechConfigured)
-  );
-  ui.compliancePanel.appendChild(
-    renderComplianceItem("Azure Blob", status.integrations?.azureBlobConfigured)
-  );
-
-  const access = document.createElement("div");
-  access.className = "compliance-item ok";
-  access.innerHTML = `<span class="dot"></span><span>Access Model: Doctor-only workspace</span>`;
-  ui.compliancePanel.appendChild(access);
-
-  const codebook = document.createElement("div");
-  codebook.className = `compliance-item ${status.codebook?.stale ? "warn" : "ok"}`;
-  codebook.innerHTML = `<span class="dot"></span><span>Codebook Age: ${status.codebook?.ageDays ?? "?"} days</span>`;
-  ui.compliancePanel.appendChild(codebook);
 };
 
 const formatGuidanceText = (guidanceItems) => {
@@ -729,5 +696,4 @@ ui.stopBtn.addEventListener("click", () => {
   stopEncounter().catch((error) => addLog(`Stop failed: ${error.message}`, "warn"));
 });
 
-refreshComplianceStatus().catch((error) => addLog(`Compliance status error: ${error.message}`, "warn"));
 
