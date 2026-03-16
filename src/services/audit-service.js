@@ -55,3 +55,51 @@ export const writeAuditEvent = async (eventType, payload) => {
   return record;
 };
 
+export const listAuditEvents = ({
+  appointmentId = "",
+  doctorRef = "",
+  limit = 200,
+  since = "",
+} = {}) => {
+  ensureLogFile();
+  const normalizedAppointmentId = String(appointmentId || "").trim();
+  const normalizedDoctorRef = String(doctorRef || "").trim().toLowerCase();
+  const sinceTs = since ? new Date(since).getTime() : null;
+  const safeLimit = Math.max(1, Math.min(Number(limit) || 200, 5000));
+
+  const raw = fs.readFileSync(auditFile, "utf8").trim();
+  if (!raw) {
+    return [];
+  }
+
+  const records = raw
+    .split("\n")
+    .map((line) => {
+      try {
+        return JSON.parse(line);
+      } catch {
+        return null;
+      }
+    })
+    .filter(Boolean)
+    .filter((record) => {
+      if (normalizedAppointmentId) {
+        const payloadAppointmentId = String(record?.payload?.appointmentId || "").trim();
+        if (payloadAppointmentId !== normalizedAppointmentId) return false;
+      }
+
+      if (normalizedDoctorRef) {
+        const payloadDoctorRef = String(record?.payload?.doctorRef || "").trim().toLowerCase();
+        if (payloadDoctorRef !== normalizedDoctorRef) return false;
+      }
+
+      if (sinceTs) {
+        const atTs = new Date(record.at).getTime();
+        if (Number.isNaN(atTs) || atTs < sinceTs) return false;
+      }
+
+      return true;
+    });
+
+  return records.slice(-safeLimit).reverse();
+};

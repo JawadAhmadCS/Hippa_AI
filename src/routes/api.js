@@ -1,3 +1,5 @@
+import fs from "node:fs/promises";
+import path from "node:path";
 import express from "express";
 import multer from "multer";
 import { env, featureFlags } from "../config/env.js";
@@ -8,13 +10,14 @@ import {
   getAppointment,
   listAppointments,
 } from "../services/appointment-store.js";
-import { writeAuditEvent } from "../services/audit-service.js";
+import { listAuditEvents, writeAuditEvent } from "../services/audit-service.js";
 import {
   getCodebookSnapshot,
   getCodebookStatus,
   searchCodes,
   updateCodeById,
 } from "../services/codebook-service.js";
+import { buildTranscriptPdfBuffer } from "../services/pdf-service.js";
 import { runLiveAnalysisPipeline } from "../services/live-analysis-service.js";
 import { getAzureSpeechToken, uploadAppointmentAudio } from "../services/azure-service.js";
 import { normalizeIncomingTranscript, parseAwsTranscribeMedicalPayload } from "../services/stt-service.js";
@@ -23,6 +26,21 @@ import {
   subscribeToAppointmentStream,
 } from "../services/streaming-service.js";
 import { normalizeTranscriptSegment } from "../services/transcript-service.js";
+import { buildRevenueCsv, buildRevenueReport } from "../services/reporting-service.js";
+import {
+  addBaaDocument,
+  getCodebookExtensions,
+  getDoctorPreferences,
+  getGeneralSettings,
+  getHipaaSettings,
+  getProductionReadinessSettings,
+  updateCodebookExtensions,
+  updateDoctorPreferences,
+  updateGeneralSettings,
+  updateHipaaSettings,
+  updateProductionReadinessSettings,
+} from "../services/platform-config-service.js";
+import { buildProductionReadinessStatus } from "../services/production-readiness-service.js";
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 30 * 1024 * 1024 } });
@@ -50,7 +68,88 @@ const fireAndForgetAudit = (eventType, payload) => {
   writeAuditEvent(eventType, payload).catch(() => {});
 };
 
-const roundMoney = (value) => Number(Number(value || 0).toFixed(2));
+const normalizeDateOrNull = (value) => {
+  if (!value) return null;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+};
+
+const filterAppointments = ({
+  search = "",
+  dateFrom = "",
+  dateTo = "",
+} = {}) => {
+  const query = String(search || "").trim().toLowerCase();
+  const start = normalizeDateOrNull(dateFrom);
+  const end = normalizeDateOrNull(dateTo);
+  if (end) end.setHours(23, 59, 59, 999);
+
+  return listAppointments().filter((appointment) => {
+    if (query) {
+      const haystack = [
+        appointment.id,
+        appointment.patientRef,
+        appointment.doctorRef,
+        appointment.insurancePlan,
+        appointment.visitType,
+      ]
+        .join(" ")
+        .toLowerCase();
+      if (!haystack.includes(query)) return false;
+    }
+
+    const created = normalizeDateOrNull(appointment.createdAt);
+    if (!created) return false;
+    if (start && created < start) return false;
+    if (end && created > end) return false;
+
+    return true;
+  });
+};
+
+const buildTranscriptExportLines = (appointment) => {
+  const lines = [
+    `Encounter ID: ${appointment.id}`,
+    `Doctor: ${appointment.doctorRef || "-"}`,
+    `Patient Reference: ${appointment.patientRef || "-"}`,
+    `Date: ${appointment.createdAt || "-"}`,
+    "",
+    "Transcript",
+    "----------",
+  ];
+
+  const transcript = Array.isArray(appointment.transcriptSegments)
+    ? appointment.transcriptSegments
+    : [];
+  for (const segment of transcript) {
+    const at = segment.at ? new Date(segment.at).toLocaleString() : "";
+    const source = segment.source || "transcript";
+    const text = segment.cleanedText || segment.text || "";
+    lines.push(`[${at}] ${source}: ${text}`);
+  }
+
+  lines.push("");
+  lines.push("Final Billed CPT Codes");
+  lines.push("----------------------");
+  const billableCodes = Array.isArray(appointment.revenueTracker?.billableCodes)
+    ? appointment.revenueTracker.billableCodes
+    : [];
+
+  if (!billableCodes.length) {
+    lines.push("No billable codes recorded.");
+  } else {
+    for (const code of billableCodes) {
+      const amount = Number(code.estimatedAmount || 0).toFixed(2);
+      lines.push(`${code.code || "-"} - ${code.title || ""} ($${amount})`);
+    }
+  }
+
+  lines.push("");
+  lines.push(`Projected Revenue: $${Number(appointment.revenueTracker?.projectedTotal || 0).toFixed(2)}`);
+  lines.push(`Earned Now: $${Number(appointment.revenueTracker?.earnedNow || 0).toFixed(2)}`);
+
+  return lines;
+};
 
 const buildTranscriptResponse = ({ appointment, processedSegment, pipelineResult }) => ({
   transcriptCount: appointment.transcriptSegments.length,
@@ -213,9 +312,19 @@ router.post(
 
 router.get(
   "/appointments",
-  withAsync(async (_request, response) => {
+  withAsync(async (request, response) => {
+    const search = String(request.query.q || "").trim();
+    const dateFrom = String(request.query.dateFrom || "").trim();
+    const dateTo = String(request.query.dateTo || "").trim();
+    const appointments = filterAppointments({ search, dateFrom, dateTo });
+
     response.json({
-      appointments: listAppointments(),
+      appointments,
+      filters: {
+        q: search,
+        dateFrom,
+        dateTo,
+      },
     });
   })
 );
@@ -230,84 +339,70 @@ router.get(
 );
 
 router.get(
-  "/reports/revenue",
-  withAsync(async (_request, response) => {
-    const appointments = listAppointments();
-    const totals = {
-      encounters: appointments.length,
-      consentedEncounters: 0,
-      totalProjectedRevenue: 0,
-      totalEarnedNow: 0,
-      avgProjectedPerEncounter: 0,
-    };
+  "/appointments/:appointmentId/transcript.pdf",
+  withAsync(async (request, response) => {
+    const appointment = ensureAppointment(request.params.appointmentId, response);
+    if (!appointment) return;
 
-    const byInsuranceMap = new Map();
-    const byVisitTypeMap = new Map();
+    const lines = buildTranscriptExportLines(appointment);
+    const pdf = buildTranscriptPdfBuffer({
+      title: `Encounter Transcript - ${appointment.id}`,
+      lines,
+    });
 
-    for (const appointment of appointments) {
-      const projectedRevenue = Number(appointment.projectedRevenue || 0);
-      const earnedNow = Number(appointment.earnedNow || 0);
+    response.setHeader("Content-Type", "application/pdf");
+    response.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${appointment.id}-transcript.pdf"`
+    );
+    response.send(pdf);
+  })
+);
 
-      totals.totalProjectedRevenue += projectedRevenue;
-      totals.totalEarnedNow += earnedNow;
-      if (appointment.consentGiven) {
-        totals.consentedEncounters += 1;
-      }
+router.get(
+  "/appointments/:appointmentId/audit",
+  withAsync(async (request, response) => {
+    const appointment = ensureAppointment(request.params.appointmentId, response);
+    if (!appointment) return;
 
-      const insuranceKey = String(appointment.insurancePlan || "unknown").toLowerCase();
-      const insuranceBucket = byInsuranceMap.get(insuranceKey) || {
-        insurancePlan: insuranceKey,
-        encounters: 0,
-        projectedRevenue: 0,
-        earnedNow: 0,
-      };
-      insuranceBucket.encounters += 1;
-      insuranceBucket.projectedRevenue += projectedRevenue;
-      insuranceBucket.earnedNow += earnedNow;
-      byInsuranceMap.set(insuranceKey, insuranceBucket);
-
-      const visitKey = String(appointment.visitType || "unknown").toLowerCase();
-      const visitBucket = byVisitTypeMap.get(visitKey) || {
-        visitType: visitKey,
-        encounters: 0,
-        projectedRevenue: 0,
-        earnedNow: 0,
-      };
-      visitBucket.encounters += 1;
-      visitBucket.projectedRevenue += projectedRevenue;
-      visitBucket.earnedNow += earnedNow;
-      byVisitTypeMap.set(visitKey, visitBucket);
-    }
-
-    totals.totalProjectedRevenue = roundMoney(totals.totalProjectedRevenue);
-    totals.totalEarnedNow = roundMoney(totals.totalEarnedNow);
-    totals.avgProjectedPerEncounter = totals.encounters
-      ? roundMoney(totals.totalProjectedRevenue / totals.encounters)
-      : 0;
-
-    const byInsurance = Array.from(byInsuranceMap.values())
-      .map((bucket) => ({
-        ...bucket,
-        projectedRevenue: roundMoney(bucket.projectedRevenue),
-        earnedNow: roundMoney(bucket.earnedNow),
-      }))
-      .sort((a, b) => b.projectedRevenue - a.projectedRevenue);
-
-    const byVisitType = Array.from(byVisitTypeMap.values())
-      .map((bucket) => ({
-        ...bucket,
-        projectedRevenue: roundMoney(bucket.projectedRevenue),
-        earnedNow: roundMoney(bucket.earnedNow),
-      }))
-      .sort((a, b) => b.projectedRevenue - a.projectedRevenue);
+    const limit = Number(request.query.limit || 200);
+    const events = listAuditEvents({
+      appointmentId: appointment.id,
+      limit,
+    });
 
     response.json({
-      generatedAt: new Date().toISOString(),
-      totals,
-      byInsurance,
-      byVisitType,
-      recentAppointments: appointments.slice(0, 20),
+      appointmentId: appointment.id,
+      count: events.length,
+      events,
     });
+  })
+);
+
+router.get(
+  "/reports/revenue",
+  withAsync(async (request, response) => {
+    const granularity = String(request.query.granularity || "daily").trim().toLowerCase();
+    const dateFrom = String(request.query.dateFrom || "").trim();
+    const dateTo = String(request.query.dateTo || "").trim();
+    const report = buildRevenueReport({ granularity, dateFrom, dateTo });
+    response.json(report);
+  })
+);
+
+router.get(
+  "/reports/revenue/export.csv",
+  withAsync(async (request, response) => {
+    const granularity = String(request.query.granularity || "daily").trim().toLowerCase();
+    const dateFrom = String(request.query.dateFrom || "").trim();
+    const dateTo = String(request.query.dateTo || "").trim();
+    const report = buildRevenueReport({ granularity, dateFrom, dateTo });
+    const csv = buildRevenueCsv({ report });
+    const fileName = `revenue-report-${new Date().toISOString().slice(0, 10)}.csv`;
+
+    response.setHeader("Content-Type", "text/csv; charset=utf-8");
+    response.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
+    response.send(csv);
   })
 );
 
@@ -529,8 +624,211 @@ router.get(
 );
 
 router.get(
+  "/settings/general",
+  withAsync(async (_request, response) => {
+    const settings = getGeneralSettings();
+    response.json({
+      settings,
+      integrations: {
+        azureSpeechConfigured: featureFlags.hasAzureSpeech,
+        azureBlobConfigured: featureFlags.hasAzureBlobStorage,
+        openAiConfigured: featureFlags.hasOpenAi,
+      },
+    });
+  })
+);
+
+router.put(
+  "/settings/general",
+  withAsync(async (request, response) => {
+    const settings = updateGeneralSettings(request.body || {});
+    fireAndForgetAudit("settings.general.updated", {
+      fieldsUpdated: Object.keys(request.body || {}),
+      at: new Date().toISOString(),
+    });
+    response.json({ settings });
+  })
+);
+
+router.get(
+  "/preferences",
+  withAsync(async (request, response) => {
+    const doctorRef = String(request.query.doctorRef || "default").trim() || "default";
+    response.json({
+      doctorRef,
+      preferences: getDoctorPreferences(doctorRef),
+    });
+  })
+);
+
+router.put(
+  "/preferences",
+  withAsync(async (request, response) => {
+    const doctorRef = String(request.body.doctorRef || request.query.doctorRef || "default").trim() || "default";
+    const preferences = updateDoctorPreferences(doctorRef, request.body || {});
+    fireAndForgetAudit("preferences.updated", {
+      doctorRef,
+      fieldsUpdated: Object.keys(request.body || {}),
+      at: new Date().toISOString(),
+    });
+    response.json({ doctorRef, preferences });
+  })
+);
+
+router.get(
+  "/codebook/extensions",
+  withAsync(async (_request, response) => {
+    response.json({
+      extensions: getCodebookExtensions(),
+    });
+  })
+);
+
+router.put(
+  "/codebook/extensions",
+  withAsync(async (request, response) => {
+    const extensions = updateCodebookExtensions(request.body || {});
+    fireAndForgetAudit("codebook.extensions.updated", {
+      fieldsUpdated: Object.keys(request.body || {}),
+      at: new Date().toISOString(),
+    });
+    response.json({ extensions });
+  })
+);
+
+router.get(
+  "/audit/events",
+  withAsync(async (request, response) => {
+    const appointmentId = String(request.query.appointmentId || "").trim();
+    const doctorRef = String(request.query.doctorRef || "").trim();
+    const since = String(request.query.since || "").trim();
+    const limit = Number(request.query.limit || 200);
+    const events = listAuditEvents({
+      appointmentId,
+      doctorRef,
+      since,
+      limit,
+    });
+    response.json({
+      count: events.length,
+      events,
+    });
+  })
+);
+
+router.get(
+  "/hipaa/settings",
+  withAsync(async (_request, response) => {
+    const hipaa = getHipaaSettings();
+    const recentAudit = listAuditEvents({ limit: 100 });
+    response.json({
+      hipaa: {
+        ...hipaa,
+        encryptionStatus: {
+          ...hipaa.encryptionStatus,
+          openAiConfigured: featureFlags.hasOpenAi,
+          azureSpeechConfigured: featureFlags.hasAzureSpeech,
+          azureBlobConfigured: featureFlags.hasAzureBlobStorage,
+          auditHashChainEnabled: true,
+        },
+      },
+      recentAudit,
+    });
+  })
+);
+
+router.put(
+  "/hipaa/settings",
+  withAsync(async (request, response) => {
+    const hipaa = updateHipaaSettings(request.body || {});
+    fireAndForgetAudit("hipaa.settings.updated", {
+      fieldsUpdated: Object.keys(request.body || {}),
+      at: new Date().toISOString(),
+    });
+    response.json({ hipaa });
+  })
+);
+
+router.post(
+  "/hipaa/baa-documents",
+  upload.single("document"),
+  withAsync(async (request, response) => {
+    if (!request.file) {
+      response.status(400).json({ error: "Document file is required." });
+      return;
+    }
+
+    const uploadDir = path.resolve(process.cwd(), "data", "baa-documents");
+    await fs.mkdir(uploadDir, { recursive: true });
+    const safeName = String(request.file.originalname || "baa-document")
+      .replace(/[^a-zA-Z0-9_.-]/g, "_")
+      .slice(0, 180);
+    const fileName = `${Date.now()}-${safeName}`;
+    const fullPath = path.join(uploadDir, fileName);
+    await fs.writeFile(fullPath, request.file.buffer);
+
+    const uploadedBy = String(request.body.uploadedBy || "system").trim() || "system";
+    const vendor = String(request.body.vendor || "unknown").trim().toLowerCase() || "unknown";
+    const agreementType = String(request.body.agreementType || "BAA").trim() || "BAA";
+    const result = addBaaDocument({
+      name: request.file.originalname || fileName,
+      path: fullPath,
+      uploadedBy,
+      vendor,
+      agreementType,
+    });
+
+    fireAndForgetAudit("hipaa.baa.uploaded", {
+      name: result.entry.name,
+      uploadedBy,
+      vendor: result.entry.vendor,
+      agreementType: result.entry.agreementType,
+      at: result.entry.uploadedAt,
+    });
+
+    response.status(201).json({
+      document: result.entry,
+      hipaa: result.hipaa,
+    });
+  })
+);
+
+router.get(
+  "/production/readiness",
+  withAsync(async (_request, response) => {
+    const settings = getProductionReadinessSettings();
+    const status = buildProductionReadinessStatus();
+    response.json({
+      settings,
+      status,
+    });
+  })
+);
+
+router.put(
+  "/production/readiness",
+  withAsync(async (request, response) => {
+    const settings = updateProductionReadinessSettings(request.body || {});
+    const status = buildProductionReadinessStatus();
+
+    fireAndForgetAudit("production.readiness.updated", {
+      fieldsUpdated: Object.keys(request.body || {}),
+      statusScore: status.summary.score,
+      blockers: status.summary.blockerCount,
+      at: new Date().toISOString(),
+    });
+
+    response.json({
+      settings,
+      status,
+    });
+  })
+);
+
+router.get(
   "/compliance/status",
   withAsync(async (_request, response) => {
+    const readiness = buildProductionReadinessStatus();
     response.json({
       codebook: getCodebookStatus(),
       integrations: {
@@ -550,6 +848,11 @@ router.get(
         primaryUser: "doctor",
         patientPortalAccess: false,
         consentRequiredAtIntake: true,
+      },
+      productionReadiness: {
+        readyForProduction: readiness.readyForProduction,
+        score: readiness.summary.score,
+        blockerCount: readiness.summary.blockerCount,
       },
       notes: [
         "Prototype enforces intake consent gate before transcription capture.",

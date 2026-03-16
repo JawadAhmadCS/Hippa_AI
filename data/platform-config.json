@@ -1,0 +1,142 @@
+{
+  "general": {
+    "practiceName": "Demo Medical Practice",
+    "npiNumber": "",
+    "address": "",
+    "timezone": "UTC",
+    "language": "en",
+    "emailBillingAlerts": false,
+    "billingAlertEmail": "",
+    "apiKeys": {
+      "azureSpeechConfigured": false,
+      "azureTranscribeConfigured": false
+    }
+  },
+  "preferencesByDoctor": {
+    "default": {
+      "aiAggressiveness": "conservative",
+      "autoSuggestEnabled": true,
+      "defaultVisitType": "follow-up",
+      "transcriptDisplayLanguage": "en",
+      "keyboardShortcutsEnabled": true,
+      "dashboardLayout": "standard"
+    }
+  },
+  "codebookExtensions": {
+    "favoriteCodesByDoctor": {},
+    "payerFeeSchedules": {
+      "medicare": {},
+      "commercial": {},
+      "medicaid": {},
+      "self-pay": {}
+    },
+    "customRules": [],
+    "bundlingRules": []
+  },
+  "hipaa": {
+    "consentTemplates": [
+      {
+        "id": "default-consent",
+        "name": "Standard Intake Consent",
+        "content": "I consent to clinical recording and AI-assisted documentation/coding for treatment and billing.",
+        "updatedAt": "2026-03-12T00:00:00.000Z"
+      }
+    ],
+    "dataRetentionDays": 365,
+    "roleAccess": {
+      "attendingDoctor": [
+        "read_all",
+        "write_all",
+        "export"
+      ],
+      "nurse": [
+        "read_transcript",
+        "add_notes"
+      ],
+      "billingStaff": [
+        "read_codes",
+        "read_revenue",
+        "export"
+      ]
+    },
+    "phiMasking": {
+      "maskPatientReferenceInUi": false,
+      "maskTranscriptInExports": false
+    },
+    "baaDocuments": [],
+    "encryptionStatus": {
+      "atRest": "configured-via-provider",
+      "inTransit": "tls",
+      "keyRotationEnabled": false
+    }
+  },
+  "productionReadiness": {
+    "requiredBaaVendors": [
+      "openai",
+      "azure",
+      "hosting",
+      "logging"
+    ],
+    "vendorBaas": {
+      "openai": {
+        "status": "pending",
+        "owner": "",
+        "signedAt": "",
+        "renewalAt": "",
+        "notes": ""
+      },
+      "azure": {
+        "status": "pending",
+        "owner": "",
+        "signedAt": "",
+        "renewalAt": "",
+        "notes": ""
+      },
+      "hosting": {
+        "status": "pending",
+        "owner": "",
+        "signedAt": "",
+        "renewalAt": "",
+        "notes": ""
+      },
+      "logging": {
+        "status": "pending",
+        "owner": "",
+        "signedAt": "",
+        "renewalAt": "",
+        "notes": ""
+      }
+    },
+    "legalReview": {
+      "status": "pending",
+      "reviewedBy": "",
+      "reviewedAt": "",
+      "nextReviewAt": "",
+      "notes": ""
+    },
+    "complianceReview": {
+      "status": "pending",
+      "reviewedBy": "",
+      "reviewedAt": "",
+      "notes": "",
+      "coderReviewWorkflowEnabled": true
+    },
+    "securityHardening": {
+      "iamRbacEnabled": false,
+      "ssoEnabled": false,
+      "mfaEnforced": false,
+      "encryptionAtRestEnabled": true,
+      "encryptionInTransitEnabled": true,
+      "keyRotationEnabled": false,
+      "immutableAuditExportEnabled": false,
+      "vulnerabilityScanCompleted": false,
+      "penetrationTestCompleted": false
+    },
+    "goLive": {
+      "approved": false,
+      "approvedBy": "",
+      "approvedAt": "",
+      "notes": ""
+    }
+  }
+}

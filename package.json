@@ -6,7 +6,9 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
-    "check": "node scripts/validate-codebook.js"
+    "check": "node scripts/validate-codebook.js",
+    "readiness": "node scripts/production-readiness-check.js",
+    "readiness:strict": "node scripts/production-readiness-check.js --strict"
   },
   "dependencies": {
     "@azure/storage-blob": "^12.24.0",

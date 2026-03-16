@@ -22,6 +22,7 @@ HIPAA-first medical AI assistant prototype for live doctor-patient encounters.
 - Revenue projection with insurance multiplier + Medicare fallback, including current billable code breakdown
 - Audio recording storage (Azure Blob + local fallback)
 - SSE streaming channel for real-time backend analysis updates
+- Production readiness tracker for BAAs, security hardening, and legal/compliance approvals
 
 ## Important Scope
 
@@ -68,14 +69,17 @@ npm run dev
 
 ```bash
 npm run check
+npm run readiness
 curl http://localhost:8787/api/health
 curl http://localhost:8787/api/compliance/status
+curl http://localhost:8787/api/production/readiness
 ```
 
 Expected:
 
 - `/api/health` => `ok: true`
-- `/api/compliance/status` => integration flags + doctor-only access model
+- `/api/compliance/status` => integration flags + doctor-only access model + production readiness summary
+- `/api/production/readiness` => full control-level readiness report and blockers
 
 ## Environment Variables
 
@@ -103,6 +107,14 @@ Also used:
 - `AZURE_STORAGE_CONTAINER` (default `appointment-audio`)
 - `COMPLIANCE_LOG_RETENTION_DAYS`
 - `CODEBOOK_STALE_DAYS`
+- `REQUEST_BODY_LIMIT_MB` (default `2`)
+- `CORS_ALLOWED_ORIGINS` (comma-separated; empty = allow all origins)
+- `TRUST_PROXY` (default `false`)
+- `REQUIRE_API_KEY` (default `false`; set `true` in production)
+- `INTERNAL_API_KEY` (required when `REQUIRE_API_KEY=true`)
+- `RATE_LIMIT_ENABLED` (default `true`)
+- `RATE_LIMIT_WINDOW_MS` (default `60000`)
+- `RATE_LIMIT_MAX_REQUESTS` (default `120`)
 
 ## API Summary
 
@@ -114,6 +126,8 @@ Also used:
 - `GET /api/appointments/:id/stream` SSE live events (`transcript.accepted`, `analysis.update`, `transcript.partial`)
 - `POST /api/appointments/:id/audio` upload encounter audio
 - `GET /api/compliance/status` integration, access model, and codebook freshness
+- `GET /api/production/readiness` checklist status for BAAs, legal/compliance review, and security controls
+- `PUT /api/production/readiness` update rollout approvals and hardening state
 - `GET /api/codes/search?q=` CPT lookup
 
 ## Transcript Quality Notes
@@ -140,4 +154,10 @@ Current controls include:
 - Compliance-safe coding prompt policy
 
 Production HIPAA readiness still requires BAAs, security hardening, and legal/compliance review.
+
+## Production Rollout
+
+- Runbook: [docs/PRODUCTION-READINESS-RUNBOOK.md](docs/PRODUCTION-READINESS-RUNBOOK.md)
+- Meeting brief: [docs/CLIENT-MEETING-BRIEF.md](docs/CLIENT-MEETING-BRIEF.md)
+- Implementation verification: [docs/IMPLEMENTATION-VERIFICATION.md](docs/IMPLEMENTATION-VERIFICATION.md)
 

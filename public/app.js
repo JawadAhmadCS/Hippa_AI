@@ -21,11 +21,26 @@ const state = {
     hipaa: false,
     codebook: false,
   },
+  selectedPastEncounterId: "",
+  reportFilters: {
+    granularity: "daily",
+    dateFrom: "",
+    dateTo: "",
+  },
   codebook: {
     meta: null,
     codes: [],
     filteredCodes: [],
     selectedCode: null,
+    extensions: {
+      favoriteCodesByDoctor: {},
+      payerFeeSchedules: {},
+      customRules: [],
+      bundlingRules: [],
+    },
+  },
+  hipaa: {
+    settings: null,
   },
 };
 
@@ -67,22 +82,53 @@ const ui = {
   pastEncountersSummary: document.getElementById("pastEncountersSummary"),
   pastEncountersBody: document.getElementById("pastEncountersBody"),
   refreshPastBtn: document.getElementById("refreshPastBtn"),
+  pastSearchInput: document.getElementById("pastSearchInput"),
+  pastDateFrom: document.getElementById("pastDateFrom"),
+  pastDateTo: document.getElementById("pastDateTo"),
+  applyPastFiltersBtn: document.getElementById("applyPastFiltersBtn"),
+  pastAuditSummary: document.getElementById("pastAuditSummary"),
+  pastEncounterAuditList: document.getElementById("pastEncounterAuditList"),
   reportGeneratedAt: document.getElementById("reportGeneratedAt"),
+  reportGranularity: document.getElementById("reportGranularity"),
+  reportDateFrom: document.getElementById("reportDateFrom"),
+  reportDateTo: document.getElementById("reportDateTo"),
+  applyReportFiltersBtn: document.getElementById("applyReportFiltersBtn"),
+  exportRevenueCsvBtn: document.getElementById("exportRevenueCsvBtn"),
   reportTotalEncounters: document.getElementById("reportTotalEncounters"),
   reportConsentedEncounters: document.getElementById("reportConsentedEncounters"),
   reportTotalProjected: document.getElementById("reportTotalProjected"),
   reportTotalEarned: document.getElementById("reportTotalEarned"),
   reportAvgProjected: document.getElementById("reportAvgProjected"),
+  reportTrendChart: document.getElementById("reportTrendChart"),
   reportByInsuranceBody: document.getElementById("reportByInsuranceBody"),
   reportByVisitTypeBody: document.getElementById("reportByVisitTypeBody"),
+  reportCptFrequencyBody: document.getElementById("reportCptFrequencyBody"),
+  reportMissedOpportunityBody: document.getElementById("reportMissedOpportunityBody"),
   refreshRevenueBtn: document.getElementById("refreshRevenueBtn"),
   settingsSummary: document.getElementById("settingsSummary"),
+  settingsPracticeName: document.getElementById("settingsPracticeName"),
+  settingsNpiNumber: document.getElementById("settingsNpiNumber"),
+  settingsTimezone: document.getElementById("settingsTimezone"),
+  settingsLanguage: document.getElementById("settingsLanguage"),
+  settingsAddress: document.getElementById("settingsAddress"),
+  settingsBillingEmail: document.getElementById("settingsBillingEmail"),
+  settingsEmailAlerts: document.getElementById("settingsEmailAlerts"),
+  saveSettingsBtn: document.getElementById("saveSettingsBtn"),
+  settingsSavedAt: document.getElementById("settingsSavedAt"),
   jumpViewButtons: Array.from(document.querySelectorAll("[data-jump-view]")),
+  prefDoctorRef: document.getElementById("prefDoctorRef"),
   prefDefaultView: document.getElementById("prefDefaultView"),
+  prefAiAggressiveness: document.getElementById("prefAiAggressiveness"),
+  prefDefaultVisitType: document.getElementById("prefDefaultVisitType"),
+  prefTranscriptLanguage: document.getElementById("prefTranscriptLanguage"),
+  prefDashboardLayout: document.getElementById("prefDashboardLayout"),
   prefAutoOpenPast: document.getElementById("prefAutoOpenPast"),
   prefAutoRefreshReports: document.getElementById("prefAutoRefreshReports"),
+  prefAutoSuggestEnabled: document.getElementById("prefAutoSuggestEnabled"),
+  prefKeyboardShortcuts: document.getElementById("prefKeyboardShortcuts"),
   prefCompactTables: document.getElementById("prefCompactTables"),
   savePreferencesBtn: document.getElementById("savePreferencesBtn"),
+  loadPreferencesBtn: document.getElementById("loadPreferencesBtn"),
   preferencesStatus: document.getElementById("preferencesStatus"),
   preferencesSavedAt: document.getElementById("preferencesSavedAt"),
   hipaaSettingsContent: document.getElementById("hipaaSettingsContent"),
@@ -98,6 +144,38 @@ const ui = {
   codebookEditDocumentation: document.getElementById("codebookEditDocumentation"),
   codebookEditCompliance: document.getElementById("codebookEditCompliance"),
   saveCodebookBtn: document.getElementById("saveCodebookBtn"),
+  codebookFavoriteDoctorRef: document.getElementById("codebookFavoriteDoctorRef"),
+  codebookFavoriteCodes: document.getElementById("codebookFavoriteCodes"),
+  codebookPayerScheduleJson: document.getElementById("codebookPayerScheduleJson"),
+  saveCodebookExtensionsBtn: document.getElementById("saveCodebookExtensionsBtn"),
+  codebookExtensionsStatus: document.getElementById("codebookExtensionsStatus"),
+  codebookRuleTrigger: document.getElementById("codebookRuleTrigger"),
+  codebookRuleCode: document.getElementById("codebookRuleCode"),
+  codebookRuleNote: document.getElementById("codebookRuleNote"),
+  addCustomRuleBtn: document.getElementById("addCustomRuleBtn"),
+  codebookBundlePrimary: document.getElementById("codebookBundlePrimary"),
+  codebookBundleBlocked: document.getElementById("codebookBundleBlocked"),
+  codebookBundleReason: document.getElementById("codebookBundleReason"),
+  addBundlingRuleBtn: document.getElementById("addBundlingRuleBtn"),
+  customRulesList: document.getElementById("customRulesList"),
+  bundlingRulesList: document.getElementById("bundlingRulesList"),
+  hipaaTemplateName: document.getElementById("hipaaTemplateName"),
+  hipaaTemplateContent: document.getElementById("hipaaTemplateContent"),
+  hipaaRetentionDays: document.getElementById("hipaaRetentionDays"),
+  saveHipaaSettingsBtn: document.getElementById("saveHipaaSettingsBtn"),
+  hipaaTemplatesList: document.getElementById("hipaaTemplatesList"),
+  hipaaRoleAccessJson: document.getElementById("hipaaRoleAccessJson"),
+  hipaaMaskPatientRef: document.getElementById("hipaaMaskPatientRef"),
+  hipaaMaskTranscriptExport: document.getElementById("hipaaMaskTranscriptExport"),
+  saveHipaaAccessBtn: document.getElementById("saveHipaaAccessBtn"),
+  hipaaEncryptionStatus: document.getElementById("hipaaEncryptionStatus"),
+  hipaaBaaUploader: document.getElementById("hipaaBaaUploader"),
+  hipaaBaaFile: document.getElementById("hipaaBaaFile"),
+  uploadBaaBtn: document.getElementById("uploadBaaBtn"),
+  hipaaBaaDocsList: document.getElementById("hipaaBaaDocsList"),
+  hipaaAuditDoctorFilter: document.getElementById("hipaaAuditDoctorFilter"),
+  refreshAuditLogsBtn: document.getElementById("refreshAuditLogsBtn"),
+  hipaaAuditLogList: document.getElementById("hipaaAuditLogList"),
 };
 
 const safeNumber = (value) => Number(value || 0).toFixed(2);
@@ -112,7 +190,14 @@ const viewTitles = {
   hipaa: "HIPAA Settings",
 };
 const defaultPrefs = {
+  doctorRef: "default",
   defaultView: "live",
+  aiAggressiveness: "conservative",
+  autoSuggestEnabled: true,
+  defaultVisitType: "follow-up",
+  transcriptDisplayLanguage: "en",
+  keyboardShortcutsEnabled: true,
+  dashboardLayout: "standard",
   autoOpenPastAfterStop: false,
   autoRefreshReports: true,
   compactTables: false,
@@ -458,15 +543,33 @@ const setCompactTableMode = (enabled) => {
 };
 
 const applyPreferencesToUi = (prefs) => {
+  if (ui.prefDoctorRef) ui.prefDoctorRef.value = prefs.doctorRef || "default";
   if (ui.prefDefaultView) ui.prefDefaultView.value = prefs.defaultView || "live";
+  if (ui.prefAiAggressiveness) ui.prefAiAggressiveness.value = prefs.aiAggressiveness || "conservative";
+  if (ui.prefDefaultVisitType) ui.prefDefaultVisitType.value = prefs.defaultVisitType || "follow-up";
+  if (ui.prefTranscriptLanguage) {
+    ui.prefTranscriptLanguage.value = prefs.transcriptDisplayLanguage || "en";
+  }
+  if (ui.prefDashboardLayout) ui.prefDashboardLayout.value = prefs.dashboardLayout || "standard";
   if (ui.prefAutoOpenPast) ui.prefAutoOpenPast.checked = Boolean(prefs.autoOpenPastAfterStop);
   if (ui.prefAutoRefreshReports) ui.prefAutoRefreshReports.checked = Boolean(prefs.autoRefreshReports);
+  if (ui.prefAutoSuggestEnabled) ui.prefAutoSuggestEnabled.checked = Boolean(prefs.autoSuggestEnabled);
+  if (ui.prefKeyboardShortcuts) {
+    ui.prefKeyboardShortcuts.checked = Boolean(prefs.keyboardShortcutsEnabled);
+  }
   if (ui.prefCompactTables) ui.prefCompactTables.checked = Boolean(prefs.compactTables);
   setCompactTableMode(Boolean(prefs.compactTables));
 };
 
 const readPreferencesFromUi = () => ({
+  doctorRef: ui.prefDoctorRef?.value?.trim() || "default",
   defaultView: ui.prefDefaultView?.value || "live",
+  aiAggressiveness: ui.prefAiAggressiveness?.value || "conservative",
+  autoSuggestEnabled: Boolean(ui.prefAutoSuggestEnabled?.checked),
+  defaultVisitType: ui.prefDefaultVisitType?.value || "follow-up",
+  transcriptDisplayLanguage: ui.prefTranscriptLanguage?.value || "en",
+  keyboardShortcutsEnabled: Boolean(ui.prefKeyboardShortcuts?.checked),
+  dashboardLayout: ui.prefDashboardLayout?.value || "standard",
   autoOpenPastAfterStop: Boolean(ui.prefAutoOpenPast?.checked),
   autoRefreshReports: Boolean(ui.prefAutoRefreshReports?.checked),
   compactTables: Boolean(ui.prefCompactTables?.checked),
@@ -479,18 +582,47 @@ const renderPastEncounters = (appointments) => {
     .map(
       (item) => `
       <tr>
-        <td class="table-code-pill">${escapeHtml(item.id)}</td>
-        <td>${escapeHtml(item.doctorRef || "-")}</td>
+        <td>
+          <div class="table-code-pill">${escapeHtml(item.id)}</div>
+          <div class="tiny-note">${escapeHtml(item.doctorRef || "-")}</div>
+        </td>
         <td>${escapeHtml(item.patientRef || "-")}</td>
-        <td>${escapeHtml(item.insurancePlan || "-")}</td>
-        <td>${escapeHtml(item.visitType || "-")}</td>
         <td>${escapeHtml(formatDateTime(item.createdAt))}</td>
-        <td>${escapeHtml(formatCurrency(item.projectedRevenue || 0))}</td>
+        <td>
+          <div class="pill-list">
+            ${(item.finalCptCodes || [])
+              .slice(0, 4)
+              .map((code) => `<span class="pill">${escapeHtml(code)}</span>`)
+              .join("") || '<span class="tiny-note">No codes</span>'}
+          </div>
+        </td>
+        <td>${escapeHtml(formatCurrency(item.earnedNow || item.projectedRevenue || 0))}</td>
+        <td>
+          <div class="inline-actions">
+            <a class="btn btn-ghost" style="height:30px;padding:0 10px;" href="/api/appointments/${encodeURIComponent(
+              item.id
+            )}/transcript.pdf" target="_blank" rel="noopener">PDF</a>
+            <button class="btn btn-ghost" style="height:30px;padding:0 10px;" data-audit-id="${escapeHtml(
+              item.id
+            )}" type="button">Audit</button>
+          </div>
+        </td>
       </tr>`
     )
     .join("");
 
-  renderTableBody(ui.pastEncountersBody, rowsHtml, 7, "No completed encounters to show.");
+  renderTableBody(ui.pastEncountersBody, rowsHtml, 6, "No completed encounters to show.");
+
+  ui.pastEncountersBody.querySelectorAll("button[data-audit-id]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const appointmentId = button.getAttribute("data-audit-id");
+      if (!appointmentId) return;
+      state.selectedPastEncounterId = appointmentId;
+      loadPastEncounterAudit(appointmentId).catch((error) =>
+        addLog(`Unable to load encounter audit: ${error.message}`, "warn")
+      );
+    });
+  });
 
   if (ui.pastEncountersSummary) {
     const count = Array.isArray(appointments) ? appointments.length : 0;
@@ -498,8 +630,49 @@ const renderPastEncounters = (appointments) => {
   }
 };
 
+const renderAuditItems = (container, events, fallbackText) => {
+  if (!container) return;
+  if (!Array.isArray(events) || !events.length) {
+    container.innerHTML = `<div class="tiny-note">${escapeHtml(fallbackText)}</div>`;
+    return;
+  }
+  container.innerHTML = events
+    .map((event) => {
+      const meta = `${event.at || ""} • ${event.eventType || "event"}`;
+      const body = JSON.stringify(event.payload || {}, null, 2);
+      return `
+        <div class="audit-item">
+          <div class="meta">${escapeHtml(meta)}</div>
+          <div class="body">${escapeHtml(body)}</div>
+        </div>
+      `;
+    })
+    .join("");
+};
+
+const loadPastEncounterAudit = async (appointmentId) => {
+  if (!appointmentId) return;
+  const payload = await api(`/api/appointments/${encodeURIComponent(appointmentId)}/audit?limit=120`);
+  if (ui.pastAuditSummary) {
+    ui.pastAuditSummary.textContent = `${payload.count || 0} records for ${appointmentId}`;
+  }
+  renderAuditItems(
+    ui.pastEncounterAuditList,
+    payload.events || [],
+    "No audit events for this encounter."
+  );
+};
+
 const loadPastEncounters = async () => {
-  const payload = await api("/api/appointments");
+  const query = new URLSearchParams();
+  const q = String(ui.pastSearchInput?.value || "").trim();
+  const dateFrom = String(ui.pastDateFrom?.value || "").trim();
+  const dateTo = String(ui.pastDateTo?.value || "").trim();
+  if (q) query.set("q", q);
+  if (dateFrom) query.set("dateFrom", dateFrom);
+  if (dateTo) query.set("dateTo", dateTo);
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  const payload = await api(`/api/appointments${suffix}`);
   renderPastEncounters(payload.appointments || []);
   state.loadedViewData.past = true;
 };
@@ -551,21 +724,123 @@ const renderRevenueReport = (report) => {
     )
     .join("");
   renderTableBody(ui.reportByVisitTypeBody, visitRows, 4, "No visit type data.");
+
+  const cptRows = (report?.cptFrequency || [])
+    .slice(0, 30)
+    .map(
+      (item) => `
+      <tr>
+        <td class="table-code-pill">${escapeHtml(item.code || "-")}</td>
+        <td>${escapeHtml(item.title || "-")}</td>
+        <td>${escapeHtml(String(item.frequency || 0))}</td>
+        <td>${escapeHtml(formatCurrency(item.projectedRevenue || 0))}</td>
+      </tr>`
+    )
+    .join("");
+  renderTableBody(ui.reportCptFrequencyBody, cptRows, 4, "No CPT usage data.");
+
+  const missedRows = (report?.missedOpportunity || [])
+    .slice(0, 30)
+    .map(
+      (item) => `
+      <tr>
+        <td class="table-code-pill">${escapeHtml(item.potentialCode || "-")}</td>
+        <td>${escapeHtml(item.component || "-")}</td>
+        <td>${escapeHtml(String(item.count || 0))}</td>
+      </tr>`
+    )
+    .join("");
+  renderTableBody(
+    ui.reportMissedOpportunityBody,
+    missedRows,
+    3,
+    "No missed opportunity records."
+  );
+
+  const trend = Array.isArray(report?.trendSeries) ? report.trendSeries.slice(-24) : [];
+  if (ui.reportTrendChart) {
+    if (!trend.length) {
+      ui.reportTrendChart.innerHTML = '<div class="tiny-note">No trend data yet.</div>';
+    } else {
+      const max = Math.max(...trend.map((item) => Number(item.projectedRevenue || 0)), 1);
+      ui.reportTrendChart.innerHTML = trend
+        .map((item) => {
+          const projected = Number(item.projectedRevenue || 0);
+          const barHeight = Math.max(4, Math.round((projected / max) * 110));
+          return `
+            <div class="chart-col">
+              <div class="chart-bar-wrap">
+                <div class="chart-bar" style="height:${barHeight}px"></div>
+              </div>
+              <div class="chart-label">${escapeHtml(item.period || "-")}</div>
+              <div class="chart-value">${escapeHtml(formatCurrency(projected))}</div>
+            </div>
+          `;
+        })
+        .join("");
+    }
+  }
+};
+
+const buildRevenueQueryString = () => {
+  const query = new URLSearchParams();
+  const granularity = String(ui.reportGranularity?.value || state.reportFilters.granularity || "daily")
+    .trim()
+    .toLowerCase();
+  const dateFrom = String(ui.reportDateFrom?.value || "").trim();
+  const dateTo = String(ui.reportDateTo?.value || "").trim();
+  query.set("granularity", granularity);
+  if (dateFrom) query.set("dateFrom", dateFrom);
+  if (dateTo) query.set("dateTo", dateTo);
+  state.reportFilters = { granularity, dateFrom, dateTo };
+  return query.toString();
 };
 
 const loadRevenueReport = async () => {
-  const payload = await api("/api/reports/revenue");
+  const query = buildRevenueQueryString();
+  const payload = await api(`/api/reports/revenue?${query}`);
   renderRevenueReport(payload || {});
   state.loadedViewData.revenue = true;
   return payload;
 };
 
-const renderSettingsSummary = ({ report, compliance }) => {
+const exportRevenueCsv = () => {
+  const query = buildRevenueQueryString();
+  window.open(`/api/reports/revenue/export.csv?${query}`, "_blank", "noopener,noreferrer");
+};
+
+const populateGeneralSettingsForm = (settings) => {
+  if (ui.settingsPracticeName) ui.settingsPracticeName.value = settings.practiceName || "";
+  if (ui.settingsNpiNumber) ui.settingsNpiNumber.value = settings.npiNumber || "";
+  if (ui.settingsTimezone) ui.settingsTimezone.value = settings.timezone || "";
+  if (ui.settingsLanguage) ui.settingsLanguage.value = settings.language || "en";
+  if (ui.settingsAddress) ui.settingsAddress.value = settings.address || "";
+  if (ui.settingsBillingEmail) ui.settingsBillingEmail.value = settings.billingAlertEmail || "";
+  if (ui.settingsEmailAlerts) ui.settingsEmailAlerts.checked = Boolean(settings.emailBillingAlerts);
+};
+
+const readGeneralSettingsForm = () => ({
+  practiceName: String(ui.settingsPracticeName?.value || "").trim(),
+  npiNumber: String(ui.settingsNpiNumber?.value || "").trim(),
+  timezone: String(ui.settingsTimezone?.value || "").trim(),
+  language: String(ui.settingsLanguage?.value || "en").trim(),
+  address: String(ui.settingsAddress?.value || "").trim(),
+  emailBillingAlerts: Boolean(ui.settingsEmailAlerts?.checked),
+  billingAlertEmail: String(ui.settingsBillingEmail?.value || "").trim(),
+});
+
+const renderSettingsSummary = ({ report, compliance, generalSettings, integrations }) => {
   if (!ui.settingsSummary) return;
 
   const codebook = compliance?.codebook || {};
   const totals = report?.totals || {};
   ui.settingsSummary.innerHTML = `
+    <div class="kv-row"><span class="kv-key">Practice Name</span><span class="kv-value">${escapeHtml(
+      generalSettings?.practiceName || "-"
+    )}</span></div>
+    <div class="kv-row"><span class="kv-key">NPI Number</span><span class="kv-value">${escapeHtml(
+      generalSettings?.npiNumber || "-"
+    )}</span></div>
     <div class="kv-row"><span class="kv-key">Codebook Version</span><span class="kv-value">${escapeHtml(
       codebook.version || "-"
     )}</span></div>
@@ -575,8 +850,14 @@ const renderSettingsSummary = ({ report, compliance }) => {
     <div class="kv-row"><span class="kv-key">Realtime Streaming</span><span class="kv-value">${escapeHtml(
       compliance?.integrations?.realtimeStreamingConfigured ? "Enabled" : "Disabled"
     )}</span></div>
+    <div class="kv-row"><span class="kv-key">Azure Speech</span><span class="kv-value">${escapeHtml(
+      integrations?.azureSpeechConfigured ? "Configured" : "Not configured"
+    )}</span></div>
+    <div class="kv-row"><span class="kv-key">Azure Transcribe</span><span class="kv-value">${escapeHtml(
+      integrations?.azureBlobConfigured ? "Configured" : "Not configured"
+    )}</span></div>
     <div class="kv-row"><span class="kv-key">OpenAI Analysis</span><span class="kv-value">${escapeHtml(
-      compliance?.integrations?.openAiAnalysisConfigured ? "Configured" : "Not configured"
+      integrations?.openAiConfigured ? "Configured" : "Not configured"
     )}</span></div>
     <div class="kv-row"><span class="kv-key">Total Encounters</span><span class="kv-value">${escapeHtml(
       String(totals.encounters || 0)
@@ -588,67 +869,223 @@ const renderSettingsSummary = ({ report, compliance }) => {
 };
 
 const loadSettingsSummary = async () => {
-  const [report, compliance] = await Promise.all([
+  const [report, compliance, settingsPayload] = await Promise.all([
     loadRevenueReport(),
     api("/api/compliance/status"),
+    api("/api/settings/general"),
   ]);
-  renderSettingsSummary({ report, compliance });
+  populateGeneralSettingsForm(settingsPayload.settings || {});
+  renderSettingsSummary({
+    report,
+    compliance,
+    generalSettings: settingsPayload.settings || {},
+    integrations: settingsPayload.integrations || {},
+  });
   state.loadedViewData.settings = true;
 };
 
+const saveGeneralSettings = async () => {
+  const payload = await api("/api/settings/general", {
+    method: "PUT",
+    body: JSON.stringify(readGeneralSettingsForm()),
+  });
+  populateGeneralSettingsForm(payload.settings || {});
+  if (ui.settingsSavedAt) {
+    ui.settingsSavedAt.textContent = `Saved at ${new Date().toLocaleTimeString()}`;
+  }
+  addLog("General settings updated.", "good");
+  state.loadedViewData.settings = false;
+};
+
+const renderSimplePills = (container, values, emptyText = "No items") => {
+  if (!container) return;
+  if (!Array.isArray(values) || !values.length) {
+    container.innerHTML = `<span class="pill">${escapeHtml(emptyText)}</span>`;
+    return;
+  }
+  container.innerHTML = values.map((value) => `<span class="pill">${escapeHtml(value)}</span>`).join("");
+};
+
 const renderHipaaSettings = (payload) => {
-  if (!ui.hipaaSettingsContent) return;
+  const hipaa = payload?.hipaa || {};
+  state.hipaa.settings = hipaa;
 
-  const integrations = payload?.integrations || {};
-  const targets = payload?.latencyTargets || {};
-  const notes = Array.isArray(payload?.notes) ? payload.notes : [];
+  const templates = Array.isArray(hipaa.consentTemplates) ? hipaa.consentTemplates : [];
+  renderSimplePills(
+    ui.hipaaTemplatesList,
+    templates.map((template) => `${template.name || "Template"} (${template.id || "-"})`),
+    "No templates loaded"
+  );
 
-  const integrationRows = Object.entries(integrations)
-    .map(
-      ([key, value]) => `
-      <div class="kv-row">
-        <span class="kv-key">${escapeHtml(key)}</span>
-        <span class="kv-value">${escapeHtml(value ? "Enabled" : "Disabled")}</span>
-      </div>`
-    )
-    .join("");
+  if (ui.hipaaRetentionDays) {
+    ui.hipaaRetentionDays.value = Number(hipaa.dataRetentionDays || 365);
+  }
 
-  const noteRows = notes
-    .map((note) => `<div class="tiny-note">${escapeHtml(note)}</div>`)
-    .join("");
+  if (ui.hipaaRoleAccessJson) {
+    ui.hipaaRoleAccessJson.value = JSON.stringify(hipaa.roleAccess || {}, null, 2);
+  }
 
-  ui.hipaaSettingsContent.innerHTML = `
-    <div class="info-card">
-      <h3>Integration Status</h3>
-      <div class="kv-list">${integrationRows || '<div class="tiny-note">No integration data.</div>'}</div>
-    </div>
-    <div class="info-card">
-      <h3>Latency Targets</h3>
+  if (ui.hipaaMaskPatientRef) {
+    ui.hipaaMaskPatientRef.checked = Boolean(hipaa.phiMasking?.maskPatientReferenceInUi);
+  }
+  if (ui.hipaaMaskTranscriptExport) {
+    ui.hipaaMaskTranscriptExport.checked = Boolean(hipaa.phiMasking?.maskTranscriptInExports);
+  }
+
+  renderSimplePills(
+    ui.hipaaBaaDocsList,
+    (hipaa.baaDocuments || []).map((item) => `${item.name} • ${formatDateTime(item.uploadedAt)}`),
+    "No BAA documents yet"
+  );
+
+  if (ui.hipaaEncryptionStatus) {
+    const status = hipaa.encryptionStatus || {};
+    ui.hipaaEncryptionStatus.innerHTML = `
+      <div class="kv-row"><span class="kv-key">At Rest</span><span class="kv-value">${escapeHtml(
+        status.atRest || "-"
+      )}</span></div>
+      <div class="kv-row"><span class="kv-key">In Transit</span><span class="kv-value">${escapeHtml(
+        status.inTransit || "-"
+      )}</span></div>
+      <div class="kv-row"><span class="kv-key">Key Rotation</span><span class="kv-value">${escapeHtml(
+        status.keyRotationEnabled ? "Enabled" : "Disabled"
+      )}</span></div>
+      <div class="kv-row"><span class="kv-key">OpenAI</span><span class="kv-value">${escapeHtml(
+        status.openAiConfigured ? "Configured" : "Not configured"
+      )}</span></div>
+      <div class="kv-row"><span class="kv-key">Azure Speech</span><span class="kv-value">${escapeHtml(
+        status.azureSpeechConfigured ? "Configured" : "Not configured"
+      )}</span></div>
+      <div class="kv-row"><span class="kv-key">Azure Blob</span><span class="kv-value">${escapeHtml(
+        status.azureBlobConfigured ? "Configured" : "Not configured"
+      )}</span></div>
+      <div class="kv-row"><span class="kv-key">Audit Hash Chain</span><span class="kv-value">${escapeHtml(
+        status.auditHashChainEnabled ? "Enabled" : "Disabled"
+      )}</span></div>
+    `;
+  }
+
+  if (ui.hipaaSettingsContent) {
+    ui.hipaaSettingsContent.innerHTML = `
+      <h3>Compliance + Integration Snapshot</h3>
       <div class="kv-list">
-        <div class="kv-row"><span class="kv-key">AI target (ms)</span><span class="kv-value">${escapeHtml(
-          String(targets.aiTargetMs || "-")
+        <div class="kv-row"><span class="kv-key">Retention Days</span><span class="kv-value">${escapeHtml(
+          String(hipaa.dataRetentionDays || "-")
         )}</span></div>
-        <div class="kv-row"><span class="kv-key">AI timeout (ms)</span><span class="kv-value">${escapeHtml(
-          String(targets.aiRequestTimeoutMs || "-")
+        <div class="kv-row"><span class="kv-key">Consent Templates</span><span class="kv-value">${escapeHtml(
+          String(templates.length)
+        )}</span></div>
+        <div class="kv-row"><span class="kv-key">BAA Documents</span><span class="kv-value">${escapeHtml(
+          String((hipaa.baaDocuments || []).length)
         )}</span></div>
       </div>
-      <h3 style="margin-top:14px;">Notes</h3>
-      <div class="kv-list">${noteRows || '<div class="tiny-note">No notes.</div>'}</div>
-    </div>
-  `;
+    `;
+  }
+
+  renderAuditItems(ui.hipaaAuditLogList, payload?.recentAudit || [], "No audit records loaded.");
 };
 
 const loadHipaaSettings = async () => {
-  const payload = await api("/api/compliance/status");
+  const payload = await api("/api/hipaa/settings");
   renderHipaaSettings(payload || {});
   state.loadedViewData.hipaa = true;
+};
+
+const parseJsonSafe = (value, fallback) => {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return fallback;
+  }
+};
+
+const saveHipaaPolicySettings = async () => {
+  const current = state.hipaa.settings || {};
+  const templates = Array.isArray(current.consentTemplates) ? [...current.consentTemplates] : [];
+  const name = String(ui.hipaaTemplateName?.value || "").trim();
+  const content = String(ui.hipaaTemplateContent?.value || "").trim();
+  if (name && content) {
+    templates.unshift({
+      id: `template-${Date.now()}`,
+      name,
+      content,
+    });
+  }
+
+  const dataRetentionDays = Number(ui.hipaaRetentionDays?.value || current.dataRetentionDays || 365);
+  const payload = await api("/api/hipaa/settings", {
+    method: "PUT",
+    body: JSON.stringify({
+      consentTemplates: templates.slice(0, 50),
+      dataRetentionDays,
+    }),
+  });
+  renderHipaaSettings({ hipaa: payload.hipaa, recentAudit: [] });
+  if (ui.hipaaTemplateName) ui.hipaaTemplateName.value = "";
+  if (ui.hipaaTemplateContent) ui.hipaaTemplateContent.value = "";
+  addLog("HIPAA policy settings updated.", "good");
+};
+
+const saveHipaaAccessSettings = async () => {
+  const current = state.hipaa.settings || {};
+  const roleAccess = parseJsonSafe(
+    String(ui.hipaaRoleAccessJson?.value || "{}"),
+    current.roleAccess || {}
+  );
+
+  const payload = await api("/api/hipaa/settings", {
+    method: "PUT",
+    body: JSON.stringify({
+      roleAccess,
+      phiMasking: {
+        maskPatientReferenceInUi: Boolean(ui.hipaaMaskPatientRef?.checked),
+        maskTranscriptInExports: Boolean(ui.hipaaMaskTranscriptExport?.checked),
+      },
+    }),
+  });
+  renderHipaaSettings({ hipaa: payload.hipaa, recentAudit: [] });
+  addLog("HIPAA access/masking settings updated.", "good");
+};
+
+const loadAuditLogs = async () => {
+  const doctorRef = String(ui.hipaaAuditDoctorFilter?.value || "").trim();
+  const query = new URLSearchParams();
+  query.set("limit", "150");
+  if (doctorRef) query.set("doctorRef", doctorRef);
+  const payload = await api(`/api/audit/events?${query.toString()}`);
+  renderAuditItems(ui.hipaaAuditLogList, payload.events || [], "No audit records loaded.");
+};
+
+const uploadBaaDocument = async () => {
+  const file = ui.hipaaBaaFile?.files?.[0];
+  if (!file) {
+    addLog("Select a BAA document before upload.", "warn");
+    return;
+  }
+
+  const form = new FormData();
+  form.append("document", file);
+  form.append("uploadedBy", String(ui.hipaaBaaUploader?.value || "system").trim() || "system");
+
+  const response = await fetch("/api/hipaa/baa-documents", {
+    method: "POST",
+    body: form,
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(payload.error || `BAA upload failed (${response.status})`);
+  }
+
+  renderHipaaSettings({ hipaa: payload.hipaa, recentAudit: [] });
+  if (ui.hipaaBaaFile) ui.hipaaBaaFile.value = "";
+  addLog("BAA document uploaded.", "good");
 };
 
 const setCodebookMeta = (status, count) => {
   if (!ui.codebookMeta) return;
   const version = status?.version || "-";
   const updated = status?.lastUpdated || "-";
-  ui.codebookMeta.textContent = `Version ${version} · ${count} codes · Updated ${updated}`;
+  ui.codebookMeta.textContent = `Version ${version} - ${count} codes - Updated ${updated}`;
 };
 
 const setCodebookEditorState = (text) => {
@@ -738,6 +1175,7 @@ const loadCodebook = async () => {
   setCodebookMeta(state.codebook.meta, state.codebook.codes.length);
   applyCodebookFilter();
   clearCodebookEditor();
+  await loadCodebookExtensions();
   state.loadedViewData.codebook = true;
 };
 
@@ -786,6 +1224,129 @@ const saveCodebook = async () => {
   addLog(`CPT code ${updated.code} updated.`, "good");
 };
 
+const renderCodebookExtensionLists = () => {
+  renderSimplePills(
+    ui.customRulesList,
+    (state.codebook.extensions.customRules || []).map(
+      (rule) => `${rule.trigger} -> ${rule.suggestedCode}`
+    ),
+    "No rules yet"
+  );
+  renderSimplePills(
+    ui.bundlingRulesList,
+    (state.codebook.extensions.bundlingRules || []).map(
+      (rule) => `${rule.primaryCode} x ${rule.blockedWithCode}`
+    ),
+    "No bundling rules yet"
+  );
+};
+
+const loadCodebookExtensions = async () => {
+  const payload = await api("/api/codebook/extensions");
+  const extensions = payload?.extensions || {};
+  state.codebook.extensions = {
+    favoriteCodesByDoctor: extensions.favoriteCodesByDoctor || {},
+    payerFeeSchedules: extensions.payerFeeSchedules || {},
+    customRules: Array.isArray(extensions.customRules) ? extensions.customRules : [],
+    bundlingRules: Array.isArray(extensions.bundlingRules) ? extensions.bundlingRules : [],
+  };
+
+  if (ui.codebookFavoriteDoctorRef && !ui.codebookFavoriteDoctorRef.value.trim()) {
+    ui.codebookFavoriteDoctorRef.value = String(ui.prefDoctorRef?.value || "default").trim() || "default";
+  }
+
+  const doctorRef = String(ui.codebookFavoriteDoctorRef?.value || "").trim();
+  const selectedDoctorRef = doctorRef || "default";
+  const favorites = state.codebook.extensions.favoriteCodesByDoctor?.[selectedDoctorRef] || [];
+  if (ui.codebookFavoriteCodes) ui.codebookFavoriteCodes.value = favorites.join(", ");
+
+  if (ui.codebookPayerScheduleJson) {
+    ui.codebookPayerScheduleJson.value = JSON.stringify(
+      state.codebook.extensions.payerFeeSchedules || {},
+      null,
+      2
+    );
+  }
+
+  renderCodebookExtensionLists();
+};
+
+const saveCodebookExtensions = async () => {
+  const doctorRef = String(ui.codebookFavoriteDoctorRef?.value || "").trim() || "default";
+  const favoriteCodes = String(ui.codebookFavoriteCodes?.value || "")
+    .split(",")
+    .map((code) => code.trim().toUpperCase())
+    .filter(Boolean);
+
+  let payerFeeSchedules = state.codebook.extensions.payerFeeSchedules || {};
+  const rawPayerJson = String(ui.codebookPayerScheduleJson?.value || "").trim();
+  if (rawPayerJson) {
+    payerFeeSchedules = JSON.parse(rawPayerJson);
+  }
+
+  const nextExtensions = {
+    ...state.codebook.extensions,
+    favoriteCodesByDoctor: {
+      ...(state.codebook.extensions.favoriteCodesByDoctor || {}),
+      [doctorRef]: favoriteCodes,
+    },
+    payerFeeSchedules,
+  };
+
+  const payload = await api("/api/codebook/extensions", {
+    method: "PUT",
+    body: JSON.stringify(nextExtensions),
+  });
+  state.codebook.extensions = payload.extensions || nextExtensions;
+  renderCodebookExtensionLists();
+  if (ui.codebookExtensionsStatus) {
+    ui.codebookExtensionsStatus.textContent = `Saved at ${new Date().toLocaleTimeString()}`;
+  }
+  addLog("Codebook extensions updated.", "good");
+};
+
+const addCustomRule = async () => {
+  const trigger = String(ui.codebookRuleTrigger?.value || "").trim();
+  const suggestedCode = String(ui.codebookRuleCode?.value || "").trim().toUpperCase();
+  const note = String(ui.codebookRuleNote?.value || "").trim();
+  if (!trigger || !suggestedCode) {
+    addLog("Custom rule requires trigger and suggested code.", "warn");
+    return;
+  }
+
+  const rules = Array.isArray(state.codebook.extensions.customRules)
+    ? state.codebook.extensions.customRules
+    : [];
+  rules.push({ trigger, suggestedCode, note });
+  state.codebook.extensions.customRules = rules;
+  await saveCodebookExtensions();
+
+  if (ui.codebookRuleTrigger) ui.codebookRuleTrigger.value = "";
+  if (ui.codebookRuleCode) ui.codebookRuleCode.value = "";
+  if (ui.codebookRuleNote) ui.codebookRuleNote.value = "";
+};
+
+const addBundlingRule = async () => {
+  const primaryCode = String(ui.codebookBundlePrimary?.value || "").trim().toUpperCase();
+  const blockedWithCode = String(ui.codebookBundleBlocked?.value || "").trim().toUpperCase();
+  const reason = String(ui.codebookBundleReason?.value || "").trim();
+  if (!primaryCode || !blockedWithCode) {
+    addLog("Bundling rule requires both CPT codes.", "warn");
+    return;
+  }
+
+  const rules = Array.isArray(state.codebook.extensions.bundlingRules)
+    ? state.codebook.extensions.bundlingRules
+    : [];
+  rules.push({ primaryCode, blockedWithCode, reason });
+  state.codebook.extensions.bundlingRules = rules;
+  await saveCodebookExtensions();
+
+  if (ui.codebookBundlePrimary) ui.codebookBundlePrimary.value = "";
+  if (ui.codebookBundleBlocked) ui.codebookBundleBlocked.value = "";
+  if (ui.codebookBundleReason) ui.codebookBundleReason.value = "";
+};
+
 const setActiveView = async (view, { forceReload = false } = {}) => {
   if (!viewTitles[view]) return;
 
@@ -816,6 +1377,7 @@ const setActiveView = async (view, { forceReload = false } = {}) => {
   }
   if (view === "hipaa" && (forceReload || !state.loadedViewData.hipaa)) {
     await loadHipaaSettings();
+    await loadAuditLogs();
   }
   if (view === "codebook" && (forceReload || !state.loadedViewData.codebook)) {
     await loadCodebook();
@@ -1299,13 +1861,44 @@ const bindNavigation = () => {
   ui.refreshPastBtn?.addEventListener("click", () => {
     loadPastEncounters().catch((error) => addLog(`Past encounters refresh failed: ${error.message}`, "warn"));
   });
+  ui.applyPastFiltersBtn?.addEventListener("click", () => {
+    loadPastEncounters().catch((error) => addLog(`Past encounter filter failed: ${error.message}`, "warn"));
+  });
 
   ui.refreshRevenueBtn?.addEventListener("click", () => {
     loadRevenueReport().catch((error) => addLog(`Revenue report refresh failed: ${error.message}`, "warn"));
   });
+  ui.applyReportFiltersBtn?.addEventListener("click", () => {
+    loadRevenueReport().catch((error) => addLog(`Revenue report filter failed: ${error.message}`, "warn"));
+  });
+  ui.exportRevenueCsvBtn?.addEventListener("click", () => {
+    exportRevenueCsv();
+  });
 
   ui.refreshHipaaBtn?.addEventListener("click", () => {
-    loadHipaaSettings().catch((error) => addLog(`HIPAA status refresh failed: ${error.message}`, "warn"));
+    Promise.all([loadHipaaSettings(), loadAuditLogs()]).catch((error) =>
+      addLog(`HIPAA status refresh failed: ${error.message}`, "warn")
+    );
+  });
+
+  ui.refreshAuditLogsBtn?.addEventListener("click", () => {
+    loadAuditLogs().catch((error) => addLog(`Audit log refresh failed: ${error.message}`, "warn"));
+  });
+
+  ui.saveSettingsBtn?.addEventListener("click", () => {
+    saveGeneralSettings().catch((error) => addLog(`Settings save failed: ${error.message}`, "warn"));
+  });
+
+  ui.saveHipaaSettingsBtn?.addEventListener("click", () => {
+    saveHipaaPolicySettings().catch((error) => addLog(`HIPAA policy save failed: ${error.message}`, "warn"));
+  });
+
+  ui.saveHipaaAccessBtn?.addEventListener("click", () => {
+    saveHipaaAccessSettings().catch((error) => addLog(`HIPAA access save failed: ${error.message}`, "warn"));
+  });
+
+  ui.uploadBaaBtn?.addEventListener("click", () => {
+    uploadBaaDocument().catch((error) => addLog(`BAA upload failed: ${error.message}`, "warn"));
   });
 };
 
@@ -1316,10 +1909,19 @@ const bindPreferences = () => {
     setCompactTableMode(Boolean(ui.prefCompactTables?.checked));
   });
 
-  ui.savePreferencesBtn?.addEventListener("click", () => {
+  ui.savePreferencesBtn?.addEventListener("click", async () => {
     const prefs = readPreferencesFromUi();
     writePreferences(prefs);
     applyPreferencesToUi(prefs);
+
+    try {
+      await api("/api/preferences", {
+        method: "PUT",
+        body: JSON.stringify(prefs),
+      });
+    } catch (error) {
+      addLog(`Preferences API save failed: ${error.message}`, "warn");
+    }
 
     if (ui.preferencesStatus) ui.preferencesStatus.textContent = "Preferences saved";
     if (ui.preferencesSavedAt) {
@@ -1327,6 +1929,24 @@ const bindPreferences = () => {
     }
 
     addLog("Preferences updated.", "good");
+  });
+
+  ui.loadPreferencesBtn?.addEventListener("click", async () => {
+    const doctorRef = String(ui.prefDoctorRef?.value || "default").trim() || "default";
+    try {
+      const payload = await api(`/api/preferences?doctorRef=${encodeURIComponent(doctorRef)}`);
+      const merged = {
+        ...readPreferences(),
+        ...payload.preferences,
+        doctorRef,
+      };
+      writePreferences(merged);
+      applyPreferencesToUi(merged);
+      if (ui.preferencesStatus) ui.preferencesStatus.textContent = "Preferences loaded";
+      addLog(`Preferences loaded for ${doctorRef}.`, "good");
+    } catch (error) {
+      addLog(`Preferences load failed: ${error.message}`, "warn");
+    }
   });
 };
 
@@ -1344,11 +1964,50 @@ const bindCodebook = () => {
   ui.saveCodebookBtn?.addEventListener("click", () => {
     saveCodebook().catch((error) => addLog(`Codebook save failed: ${error.message}`, "warn"));
   });
+
+  ui.saveCodebookExtensionsBtn?.addEventListener("click", () => {
+    saveCodebookExtensions().catch((error) =>
+      addLog(`Codebook extension save failed: ${error.message}`, "warn")
+    );
+  });
+
+  ui.addCustomRuleBtn?.addEventListener("click", () => {
+    addCustomRule().catch((error) => addLog(`Unable to add custom rule: ${error.message}`, "warn"));
+  });
+
+  ui.addBundlingRuleBtn?.addEventListener("click", () => {
+    addBundlingRule().catch((error) => addLog(`Unable to add bundling rule: ${error.message}`, "warn"));
+  });
+
+  ui.codebookFavoriteDoctorRef?.addEventListener("change", () => {
+    const doctorRef = String(ui.codebookFavoriteDoctorRef.value || "default").trim() || "default";
+    const favorites = state.codebook.extensions.favoriteCodesByDoctor?.[doctorRef] || [];
+    if (ui.codebookFavoriteCodes) ui.codebookFavoriteCodes.value = favorites.join(", ");
+  });
 };
 
 const initializeViews = () => {
   const prefs = readPreferences();
   applyPreferencesToUi(prefs);
+
+  if (ui.reportGranularity) ui.reportGranularity.value = state.reportFilters.granularity;
+  if (ui.prefDoctorRef && !ui.prefDoctorRef.value.trim()) {
+    ui.prefDoctorRef.value = prefs.doctorRef || "default";
+  }
+
+  const doctorRef = String(ui.prefDoctorRef?.value || "default").trim() || "default";
+  api(`/api/preferences?doctorRef=${encodeURIComponent(doctorRef)}`)
+    .then((payload) => {
+      const merged = {
+        ...prefs,
+        ...payload.preferences,
+        doctorRef,
+      };
+      writePreferences(merged);
+      applyPreferencesToUi(merged);
+    })
+    .catch(() => {});
+
   const initialView = viewTitles[prefs.defaultView] ? prefs.defaultView : "live";
   setActiveView(initialView).catch((error) =>
     addLog(`Unable to initialize default view: ${error.message}`, "warn")

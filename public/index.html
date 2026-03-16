@@ -973,6 +973,136 @@
       padding: 16px;
     }
 
+    .filters-row {
+      display: grid;
+      grid-template-columns: 2fr 1fr 1fr auto;
+      gap: 10px;
+      align-items: end;
+      margin-bottom: 12px;
+    }
+
+    .chart-block {
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      background: var(--surface);
+      box-shadow: var(--shadow-sm);
+      padding: 14px;
+    }
+
+    .chart-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(82px, 1fr));
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    .chart-col {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 5px;
+    }
+
+    .chart-bar-wrap {
+      width: 100%;
+      height: 120px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      display: flex;
+      align-items: flex-end;
+      justify-content: center;
+      background: linear-gradient(180deg, #f8fafc 0%, #eff6ff 100%);
+      overflow: hidden;
+    }
+
+    .chart-bar {
+      width: 70%;
+      border-radius: 6px 6px 0 0;
+      background: linear-gradient(180deg, #60a5fa 0%, #2563eb 100%);
+      min-height: 4px;
+      transition: height 0.2s ease;
+    }
+
+    .chart-label {
+      font-size: 10px;
+      font-family: var(--mono);
+      color: var(--text-muted);
+      text-align: center;
+      word-break: break-word;
+    }
+
+    .chart-value {
+      font-size: 11px;
+      font-family: var(--mono);
+      color: var(--text-secondary);
+      text-align: center;
+    }
+
+    .pill-list {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+
+    .pill {
+      font-family: var(--mono);
+      font-size: 10px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      color: var(--text-secondary);
+    }
+
+    .audit-list {
+      max-height: 300px;
+      overflow: auto;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      background: var(--surface2);
+      padding: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .audit-item {
+      padding: 8px 9px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--surface);
+    }
+
+    .audit-item .meta {
+      font-size: 10px;
+      color: var(--text-muted);
+      font-family: var(--mono);
+      margin-bottom: 4px;
+    }
+
+    .audit-item .body {
+      font-size: 12px;
+      color: var(--text-secondary);
+      line-height: 1.45;
+      font-family: var(--mono);
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .split-two {
+      display: grid;
+      grid-template-columns: 1.5fr 1fr;
+      gap: 14px;
+    }
+
+    .stack-12 { display: flex; flex-direction: column; gap: 12px; }
+
+    .helper-text {
+      font-size: 11px;
+      color: var(--text-muted);
+      font-family: var(--mono);
+    }
+
     /* ── ANIMATIONS ── */
     @keyframes fadeUp {
       from { opacity: 0; transform: translateY(6px); }
@@ -1002,6 +1132,8 @@
       .stats-grid { grid-template-columns: 1fr; }
       .settings-grid { grid-template-columns: 1fr; }
       .codebook-layout { grid-template-columns: 1fr; }
+      .filters-row { grid-template-columns: 1fr; }
+      .split-two { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -1298,22 +1430,50 @@
           </div>
         </div>
         <div class="setup-body">
-          <table class="list-table">
-            <thead>
-              <tr>
-                <th>Encounter ID</th>
-                <th>Doctor</th>
-                <th>Patient</th>
-                <th>Insurance</th>
-                <th>Visit Type</th>
-                <th>Created At</th>
-                <th>Projected</th>
-              </tr>
-            </thead>
-            <tbody id="pastEncountersBody">
-              <tr><td colspan="7" class="tiny-note">No completed encounters to show.</td></tr>
-            </tbody>
-          </table>
+          <div class="filters-row">
+            <div class="form-field">
+              <label class="form-label" for="pastSearchInput">Search (Date / Patient / Doctor)</label>
+              <input class="form-input" id="pastSearchInput" placeholder="e.g. PT-1042 or DR-001" />
+            </div>
+            <div class="form-field">
+              <label class="form-label" for="pastDateFrom">From</label>
+              <input class="form-input" id="pastDateFrom" type="date" />
+            </div>
+            <div class="form-field">
+              <label class="form-label" for="pastDateTo">To</label>
+              <input class="form-input" id="pastDateTo" type="date" />
+            </div>
+            <button class="btn btn-primary" id="applyPastFiltersBtn" type="button">Apply</button>
+          </div>
+
+          <div class="split-two">
+            <div>
+              <table class="list-table">
+                <thead>
+                  <tr>
+                    <th>Encounter</th>
+                    <th>Patient</th>
+                    <th>Date</th>
+                    <th>Final CPT</th>
+                    <th>Revenue</th>
+                    <th>Transcript</th>
+                  </tr>
+                </thead>
+                <tbody id="pastEncountersBody">
+                  <tr><td colspan="6" class="tiny-note">No completed encounters to show.</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="stack-12">
+              <div class="info-card">
+                <h3>Encounter Audit Trail</h3>
+                <div class="helper-text" id="pastAuditSummary">Select an encounter to load doctor activity.</div>
+                <div class="audit-list" id="pastEncounterAuditList">
+                  <div class="tiny-note">No encounter selected.</div>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -1334,6 +1494,29 @@
           </div>
         </div>
         <div class="setup-body stack">
+          <div class="filters-row">
+            <div class="form-field">
+              <label class="form-label" for="reportGranularity">Revenue Period</label>
+              <select class="form-select" id="reportGranularity">
+                <option value="daily">Daily</option>
+                <option value="weekly">Weekly</option>
+                <option value="monthly">Monthly</option>
+              </select>
+            </div>
+            <div class="form-field">
+              <label class="form-label" for="reportDateFrom">From</label>
+              <input class="form-input" id="reportDateFrom" type="date" />
+            </div>
+            <div class="form-field">
+              <label class="form-label" for="reportDateTo">To</label>
+              <input class="form-input" id="reportDateTo" type="date" />
+            </div>
+            <div class="inline-actions">
+              <button class="btn btn-primary" id="applyReportFiltersBtn" type="button">Apply</button>
+              <button class="btn btn-ghost" id="exportRevenueCsvBtn" type="button">Export CSV/Excel</button>
+            </div>
+          </div>
+
           <div class="stats-grid">
             <div class="metric-tile">
               <div class="metric-label">Total Encounters</div>
@@ -1357,6 +1540,13 @@
             </div>
           </div>
 
+          <div class="chart-block">
+            <h3 style="margin-bottom:8px;">Daily / Weekly / Monthly Revenue Trend</h3>
+            <div class="chart-grid" id="reportTrendChart">
+              <div class="tiny-note">No trend data yet.</div>
+            </div>
+          </div>
+
           <div class="settings-grid">
             <div class="info-card">
               <h3>By Insurance Plan</h3>
@@ -1375,7 +1565,7 @@
               </table>
             </div>
             <div class="info-card">
-              <h3>By Visit Type</h3>
+              <h3>Payer Performance by Visit Type</h3>
               <table class="list-table">
                 <thead>
                   <tr>
@@ -1387,6 +1577,40 @@
                 </thead>
                 <tbody id="reportByVisitTypeBody">
                   <tr><td colspan="4" class="tiny-note">No data.</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="settings-grid">
+            <div class="info-card">
+              <h3>CPT Code Frequency</h3>
+              <table class="list-table">
+                <thead>
+                  <tr>
+                    <th>Code</th>
+                    <th>Description</th>
+                    <th>Frequency</th>
+                    <th>Projected</th>
+                  </tr>
+                </thead>
+                <tbody id="reportCptFrequencyBody">
+                  <tr><td colspan="4" class="tiny-note">No CPT usage data.</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="info-card">
+              <h3>Missed Opportunity Analysis</h3>
+              <table class="list-table">
+                <thead>
+                  <tr>
+                    <th>Potential Code</th>
+                    <th>Component</th>
+                    <th>Count</th>
+                  </tr>
+                </thead>
+                <tbody id="reportMissedOpportunityBody">
+                  <tr><td colspan="3" class="tiny-note">No missed opportunity records.</td></tr>
                 </tbody>
               </table>
             </div>
@@ -1409,18 +1633,59 @@
         </div>
         <div class="setup-body settings-grid">
           <div class="info-card">
-            <h3>Quick Access</h3>
-            <div class="kv-list">
+            <h3>General Practice Settings</h3>
+            <div class="form-grid">
+              <div class="form-field">
+                <label class="form-label" for="settingsPracticeName">Practice Name</label>
+                <input class="form-input" id="settingsPracticeName" />
+              </div>
+              <div class="form-field">
+                <label class="form-label" for="settingsNpiNumber">NPI Number</label>
+                <input class="form-input" id="settingsNpiNumber" />
+              </div>
+              <div class="form-field">
+                <label class="form-label" for="settingsTimezone">Timezone</label>
+                <input class="form-input" id="settingsTimezone" placeholder="e.g. America/New_York" />
+              </div>
+              <div class="form-field">
+                <label class="form-label" for="settingsLanguage">Language</label>
+                <select class="form-select" id="settingsLanguage">
+                  <option value="en">English</option>
+                  <option value="es">Spanish</option>
+                  <option value="ur">Urdu</option>
+                </select>
+              </div>
+              <div class="form-field" style="grid-column:1/-1;">
+                <label class="form-label" for="settingsAddress">Practice Address</label>
+                <input class="form-input" id="settingsAddress" />
+              </div>
+              <div class="form-field">
+                <label class="form-label" for="settingsBillingEmail">Billing Alert Email</label>
+                <input class="form-input" id="settingsBillingEmail" type="email" />
+              </div>
+              <div class="form-field" style="justify-content:flex-end;">
+                <label class="consent-label" for="settingsEmailAlerts">
+                  <input type="checkbox" id="settingsEmailAlerts" />
+                  Email notifications for billing alerts
+                </label>
+              </div>
+            </div>
+            <div class="inline-actions" style="margin-top:10px;">
+              <button class="btn btn-primary" id="saveSettingsBtn" type="button">Save Settings</button>
+              <span class="tiny-note" id="settingsSavedAt">Not saved yet</span>
+            </div>
+          </div>
+
+          <div class="info-card">
+            <h3>Integrations + Quick Access</h3>
+            <div class="kv-list" id="settingsSummary">
+              <div class="tiny-note">Loading integration snapshot...</div>
+            </div>
+            <div class="inline-actions" style="margin-top:12px;">
               <button class="btn btn-ghost" type="button" data-jump-view="codebook">Open CPT Codebook</button>
               <button class="btn btn-ghost" type="button" data-jump-view="preferences">Open Preferences</button>
               <button class="btn btn-ghost" type="button" data-jump-view="hipaa">Open HIPAA Settings</button>
               <button class="btn btn-ghost" type="button" data-jump-view="revenue">Open Revenue Reports</button>
-            </div>
-          </div>
-          <div class="info-card">
-            <h3>System Snapshot</h3>
-            <div class="kv-list" id="settingsSummary">
-              <div class="tiny-note">Loading system snapshot...</div>
             </div>
           </div>
         </div>
@@ -1494,6 +1759,72 @@
             </div>
           </div>
         </div>
+        <div class="setup-body settings-grid" style="border-top:1px solid var(--border);">
+          <div class="info-card">
+            <h3>Favorites + Payer Fee Schedules</h3>
+            <div class="form-field">
+              <label class="form-label" for="codebookFavoriteDoctorRef">Doctor Ref</label>
+              <input class="form-input" id="codebookFavoriteDoctorRef" placeholder="e.g. DR-001" />
+            </div>
+            <div class="form-field">
+              <label class="form-label" for="codebookFavoriteCodes">Favorite CPT Codes (comma-separated)</label>
+              <input class="form-input" id="codebookFavoriteCodes" placeholder="e.g. 99213, 99490" />
+            </div>
+            <div class="form-field">
+              <label class="form-label" for="codebookPayerScheduleJson">Payer-specific Fee Schedules (JSON)</label>
+              <textarea class="form-input" id="codebookPayerScheduleJson" rows="8" style="height:auto;padding:10px;"></textarea>
+            </div>
+            <div class="inline-actions">
+              <button class="btn btn-primary" id="saveCodebookExtensionsBtn" type="button">Save Extensions</button>
+              <span class="tiny-note" id="codebookExtensionsStatus">Not saved yet</span>
+            </div>
+          </div>
+          <div class="info-card">
+            <h3>Custom Rules + Code Bundling (CCI)</h3>
+            <div class="form-grid">
+              <div class="form-field">
+                <label class="form-label" for="codebookRuleTrigger">Trigger Phrase</label>
+                <input class="form-input" id="codebookRuleTrigger" placeholder="e.g. smoking cessation counseling" />
+              </div>
+              <div class="form-field">
+                <label class="form-label" for="codebookRuleCode">Suggested Code</label>
+                <input class="form-input" id="codebookRuleCode" placeholder="e.g. 99406" />
+              </div>
+              <div class="form-field" style="grid-column:1/-1;">
+                <label class="form-label" for="codebookRuleNote">Rule Note</label>
+                <input class="form-input" id="codebookRuleNote" />
+              </div>
+            </div>
+            <button class="btn btn-ghost" id="addCustomRuleBtn" type="button">Add Custom Rule</button>
+
+            <div class="form-grid" style="margin-top:14px;">
+              <div class="form-field">
+                <label class="form-label" for="codebookBundlePrimary">Primary CPT</label>
+                <input class="form-input" id="codebookBundlePrimary" placeholder="e.g. 99214" />
+              </div>
+              <div class="form-field">
+                <label class="form-label" for="codebookBundleBlocked">Blocked With CPT</label>
+                <input class="form-input" id="codebookBundleBlocked" placeholder="e.g. 99213" />
+              </div>
+              <div class="form-field" style="grid-column:1/-1;">
+                <label class="form-label" for="codebookBundleReason">Bundling Reason</label>
+                <input class="form-input" id="codebookBundleReason" />
+              </div>
+            </div>
+            <button class="btn btn-ghost" id="addBundlingRuleBtn" type="button">Add Bundling Rule</button>
+
+            <div class="stack-12" style="margin-top:12px;">
+              <div>
+                <div class="helper-text">Custom Rules</div>
+                <div class="pill-list" id="customRulesList"><span class="pill">No rules yet</span></div>
+              </div>
+              <div>
+                <div class="helper-text">Bundling Rules</div>
+                <div class="pill-list" id="bundlingRulesList"><span class="pill">No bundling rules yet</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -1512,6 +1843,10 @@
         <div class="setup-body">
           <div class="form-grid">
             <div class="form-field">
+              <label class="form-label" for="prefDoctorRef">Doctor Ref</label>
+              <input class="form-input" id="prefDoctorRef" placeholder="default / DR-001" />
+            </div>
+            <div class="form-field">
               <label class="form-label" for="prefDefaultView">Default Open View</label>
               <select class="form-select" id="prefDefaultView">
                 <option value="live">Live Encounter</option>
@@ -1521,6 +1856,38 @@
                 <option value="codebook">CPT Codebook</option>
                 <option value="preferences">Preferences</option>
                 <option value="hipaa">HIPAA Settings</option>
+              </select>
+            </div>
+            <div class="form-field">
+              <label class="form-label" for="prefAiAggressiveness">AI Suggestion Aggressiveness</label>
+              <select class="form-select" id="prefAiAggressiveness">
+                <option value="conservative">Conservative</option>
+                <option value="balanced">Balanced</option>
+                <option value="aggressive">Aggressive</option>
+              </select>
+            </div>
+            <div class="form-field">
+              <label class="form-label" for="prefDefaultVisitType">Default Visit Type</label>
+              <select class="form-select" id="prefDefaultVisitType">
+                <option value="follow-up">Follow-up</option>
+                <option value="annual-wellness">Annual Wellness</option>
+                <option value="chronic-care">Chronic Care</option>
+              </select>
+            </div>
+            <div class="form-field">
+              <label class="form-label" for="prefTranscriptLanguage">Transcript Display Language</label>
+              <select class="form-select" id="prefTranscriptLanguage">
+                <option value="en">English</option>
+                <option value="es">Spanish</option>
+                <option value="ur">Urdu</option>
+              </select>
+            </div>
+            <div class="form-field">
+              <label class="form-label" for="prefDashboardLayout">Dashboard Layout</label>
+              <select class="form-select" id="prefDashboardLayout">
+                <option value="standard">Standard</option>
+                <option value="compact">Compact</option>
+                <option value="focus">Focus Mode</option>
               </select>
             </div>
             <div class="form-field" style="justify-content:flex-end;">
@@ -1536,6 +1903,18 @@
               </label>
             </div>
             <div class="form-field" style="justify-content:flex-end;">
+              <label class="consent-label" for="prefAutoSuggestEnabled">
+                <input type="checkbox" id="prefAutoSuggestEnabled" />
+                Auto-suggest AI coding hints
+              </label>
+            </div>
+            <div class="form-field" style="justify-content:flex-end;">
+              <label class="consent-label" for="prefKeyboardShortcuts">
+                <input type="checkbox" id="prefKeyboardShortcuts" />
+                Keyboard shortcuts enabled
+              </label>
+            </div>
+            <div class="form-field" style="justify-content:flex-end;">
               <label class="consent-label" for="prefCompactTables">
                 <input type="checkbox" id="prefCompactTables" />
                 Compact table rows
@@ -1544,6 +1923,7 @@
           </div>
           <div class="inline-actions">
             <button class="btn btn-primary" id="savePreferencesBtn" type="button">Save Preferences</button>
+            <button class="btn btn-ghost" id="loadPreferencesBtn" type="button">Load Preferences</button>
             <span class="tiny-note" id="preferencesSavedAt">Not saved yet</span>
           </div>
         </div>
@@ -1565,8 +1945,92 @@
             <button class="btn btn-ghost" id="refreshHipaaBtn" type="button">Refresh</button>
           </div>
         </div>
-        <div class="setup-body settings-grid" id="hipaaSettingsContent">
-          <div class="tiny-note">Loading HIPAA settings...</div>
+        <div class="setup-body settings-grid">
+          <div class="info-card">
+            <h3>Consent Templates + Retention Policy</h3>
+            <div class="form-field">
+              <label class="form-label" for="hipaaTemplateName">Template Name</label>
+              <input class="form-input" id="hipaaTemplateName" placeholder="e.g. Standard Intake Consent" />
+            </div>
+            <div class="form-field">
+              <label class="form-label" for="hipaaTemplateContent">Template Content</label>
+              <textarea class="form-input" id="hipaaTemplateContent" rows="5" style="height:auto;padding:10px;"></textarea>
+            </div>
+            <div class="form-field">
+              <label class="form-label" for="hipaaRetentionDays">Data Retention (days)</label>
+              <input class="form-input" id="hipaaRetentionDays" type="number" min="1" />
+            </div>
+            <div class="inline-actions">
+              <button class="btn btn-primary" id="saveHipaaSettingsBtn" type="button">Save HIPAA Policy</button>
+            </div>
+            <div class="helper-text" style="margin-top:8px;">Templates</div>
+            <div class="pill-list" id="hipaaTemplatesList"><span class="pill">No templates loaded</span></div>
+          </div>
+
+          <div class="info-card">
+            <h3>Role-based Access + PHI Masking</h3>
+            <div class="form-field">
+              <label class="form-label" for="hipaaRoleAccessJson">Role Access JSON</label>
+              <textarea class="form-input" id="hipaaRoleAccessJson" rows="6" style="height:auto;padding:10px;"></textarea>
+            </div>
+            <div class="form-field" style="justify-content:flex-end;">
+              <label class="consent-label" for="hipaaMaskPatientRef">
+                <input type="checkbox" id="hipaaMaskPatientRef" />
+                Mask patient references in UI
+              </label>
+            </div>
+            <div class="form-field" style="justify-content:flex-end;">
+              <label class="consent-label" for="hipaaMaskTranscriptExport">
+                <input type="checkbox" id="hipaaMaskTranscriptExport" />
+                Mask transcript in exports
+              </label>
+            </div>
+            <div class="inline-actions">
+              <button class="btn btn-ghost" id="saveHipaaAccessBtn" type="button">Save Access + Masking</button>
+            </div>
+            <div class="helper-text" style="margin-top:8px;">Encryption Status</div>
+            <div class="kv-list" id="hipaaEncryptionStatus">
+              <div class="tiny-note">Loading encryption status...</div>
+            </div>
+          </div>
+
+          <div class="info-card">
+            <h3>BAA Documents</h3>
+            <div class="form-field">
+              <label class="form-label" for="hipaaBaaUploader">Uploaded By</label>
+              <input class="form-input" id="hipaaBaaUploader" placeholder="e.g. compliance-admin" />
+            </div>
+            <div class="form-field">
+              <label class="form-label" for="hipaaBaaFile">Upload BAA Document</label>
+              <input class="form-input" id="hipaaBaaFile" type="file" />
+            </div>
+            <div class="inline-actions">
+              <button class="btn btn-primary" id="uploadBaaBtn" type="button">Upload</button>
+            </div>
+            <div class="helper-text" style="margin-top:8px;">Stored BAA Documents</div>
+            <div class="pill-list" id="hipaaBaaDocsList"><span class="pill">No documents yet</span></div>
+          </div>
+
+          <div class="info-card">
+            <h3>Audit Log Viewer</h3>
+            <div class="filters-row" style="grid-template-columns:1fr auto;">
+              <div class="form-field">
+                <label class="form-label" for="hipaaAuditDoctorFilter">Doctor Filter</label>
+                <input class="form-input" id="hipaaAuditDoctorFilter" placeholder="e.g. DR-001" />
+              </div>
+              <button class="btn btn-ghost" id="refreshAuditLogsBtn" type="button">Refresh Audit Logs</button>
+            </div>
+            <div class="audit-list" id="hipaaAuditLogList">
+              <div class="tiny-note">No audit records loaded.</div>
+            </div>
+          </div>
+
+          <div class="info-card" id="hipaaSettingsContent">
+            <h3>Compliance + Integration Snapshot</h3>
+            <div class="kv-list">
+              <div class="tiny-note">Loading HIPAA snapshot...</div>
+            </div>
+          </div>
         </div>
       </div>
     </div>

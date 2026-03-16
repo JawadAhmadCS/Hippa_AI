@@ -2,6 +2,34 @@ import crypto from "node:crypto";
 
 const appointments = new Map();
 
+const roundMoney = (value) => Number(Number(value || 0).toFixed(2));
+
+const buildAppointmentSummary = (appointment) => {
+  const billableCodes = Array.isArray(appointment.revenueTracker?.billableCodes)
+    ? appointment.revenueTracker.billableCodes
+    : [];
+  const finalCptCodes = billableCodes.map((item) => item.code).filter(Boolean);
+
+  return {
+    id: appointment.id,
+    patientRef: appointment.patientRef,
+    doctorRef: appointment.doctorRef,
+    insurancePlan: appointment.insurancePlan,
+    visitType: appointment.visitType,
+    consentGiven: appointment.consentGiven,
+    createdAt: appointment.createdAt,
+    transcriptCount: appointment.transcriptSegments.length,
+    suggestionCount: appointment.suggestions.length,
+    icdSuggestionCount: appointment.icdSuggestions.length,
+    projectedRevenue: roundMoney(appointment.revenueTracker?.projectedTotal || 0),
+    earnedNow: roundMoney(appointment.revenueTracker?.earnedNow || 0),
+    finalCptCodes,
+    missedOpportunityCount: Array.isArray(appointment.liveInsights?.missedBillables)
+      ? appointment.liveInsights.missedBillables.length
+      : 0,
+  };
+};
+
 export const createAppointment = ({
   patientRef,
   doctorRef,
@@ -53,22 +81,11 @@ export const createAppointment = ({
 
 export const getAppointment = (appointmentId) => appointments.get(appointmentId);
 
+export const listAppointmentRecords = () => Array.from(appointments.values());
+
 export const listAppointments = () =>
-  Array.from(appointments.values())
-    .map((appointment) => ({
-      id: appointment.id,
-      patientRef: appointment.patientRef,
-      doctorRef: appointment.doctorRef,
-      insurancePlan: appointment.insurancePlan,
-      visitType: appointment.visitType,
-      consentGiven: appointment.consentGiven,
-      createdAt: appointment.createdAt,
-      transcriptCount: appointment.transcriptSegments.length,
-      suggestionCount: appointment.suggestions.length,
-      icdSuggestionCount: appointment.icdSuggestions.length,
-      projectedRevenue: Number(appointment.revenueTracker?.projectedTotal || 0),
-      earnedNow: Number(appointment.revenueTracker?.earnedNow || 0),
-    }))
+  listAppointmentRecords()
+    .map((appointment) => buildAppointmentSummary(appointment))
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
 export const appendTranscriptSegment = (appointmentId, segment) => {
