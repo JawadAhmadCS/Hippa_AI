@@ -61,6 +61,7 @@ export const createAppointment = ({
       missedBillables: [],
       documentationGaps: [],
       documentationImprovements: [],
+      chartNotes: [],
       realTimePrompts: [],
       latency: {},
     },
@@ -92,6 +93,8 @@ export const appendTranscriptSegment = (appointmentId, segment) => {
   const appointment = getAppointment(appointmentId);
   if (!appointment) return null;
   const entry = {
+    id: segment.id || crypto.randomUUID(),
+    sequence: appointment.transcriptSegments.length + 1,
     text: segment.text,
     rawText: segment.rawText ?? segment.text,
     cleanedText: segment.cleanedText ?? segment.text,

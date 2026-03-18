@@ -154,6 +154,9 @@ const buildTranscriptExportLines = (appointment) => {
 const buildTranscriptResponse = ({ appointment, processedSegment, pipelineResult }) => ({
   transcriptCount: appointment.transcriptSegments.length,
   processedSegment: {
+    id: processedSegment.id,
+    sequence: processedSegment.sequence,
+    at: processedSegment.at,
     source: processedSegment.source,
     rawText: processedSegment.rawText,
     cleanedText: processedSegment.cleanedText,
@@ -170,6 +173,7 @@ const buildTranscriptResponse = ({ appointment, processedSegment, pipelineResult
     gaps: pipelineResult.documentationGaps,
     improvements: pipelineResult.documentationImprovements,
   },
+  chartNotes: pipelineResult.chartNotes,
   revenueTracker: pipelineResult.revenueTracker,
   analysis: pipelineResult.analysis,
   outputs: {
@@ -178,6 +182,7 @@ const buildTranscriptResponse = ({ appointment, processedSegment, pipelineResult
     missedBillables: pipelineResult.missedBillables,
     documentationGaps: pipelineResult.documentationGaps,
     documentationImprovements: pipelineResult.documentationImprovements,
+    chartNotes: pipelineResult.chartNotes,
     realTimePrompts: pipelineResult.guidanceItems,
     reimbursement: pipelineResult.revenueTracker,
   },
@@ -202,6 +207,9 @@ const processTranscriptSegment = async ({ appointment, rawSegment, source }) => 
     appointmentId: appointment.id,
     transcriptCount: appointment.transcriptSegments.length,
     segment: {
+      id: storedSegment?.id ?? processedSegment.id,
+      sequence: storedSegment?.sequence ?? 0,
+      at: storedSegment?.at ?? new Date().toISOString(),
       source,
       rawText: storedSegment?.rawText ?? processedSegment.rawText,
       cleanedText: storedSegment?.cleanedText ?? processedSegment.cleanedText,
@@ -220,6 +228,9 @@ const processTranscriptSegment = async ({ appointment, rawSegment, source }) => 
   const payload = buildTranscriptResponse({
     appointment,
     processedSegment: {
+      id: storedSegment?.id,
+      sequence: storedSegment?.sequence,
+      at: storedSegment?.at,
       source,
       rawText: storedSegment?.rawText ?? rawSegment,
       cleanedText: storedSegment?.cleanedText ?? processedSegment.cleanedText,

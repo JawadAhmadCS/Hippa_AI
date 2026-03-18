@@ -1,6 +1,6 @@
 # Live Analysis Upgrade - Implementation Verification
 
-Last verified: 2026-03-17
+Last verified: 2026-03-18
 
 This document captures the implemented upgrade items and their verification status in code.
 
@@ -47,6 +47,22 @@ This document captures the implemented upgrade items and their verification stat
    - `AI_CONTEXT_WINDOW_SEGMENTS`
    - Status: Verified
    - Evidence: `src/config/env.js`, `.env.example`, `README.md`
+
+10. Transcript evidence linking added so suggested CPT codes, current billable codes, and compliance prompts can open the supporting transcript excerpt.
+   - Status: Verified
+   - Evidence: `src/services/evidence-service.js`, `src/services/live-analysis-service.js`, `public/app.js`, `public/index.html`
+
+11. Doctor-facing live panel now shows AI chart notes while transcript text is retained in the background and exposed through an evidence drawer.
+   - Status: Verified
+   - Evidence: `src/services/chart-note-service.js`, `public/app.js`, `public/index.html`
+
+12. Compliance prompt output normalized to short charting actions (for example duration, chronicity, medication management) with transcript-backed evidence refs.
+   - Status: Verified
+   - Evidence: `src/services/suggestion-service.js`, `public/app.js`
+
+13. Live encounter start flow reordered so speech recognition starts before recorder upload handling, reducing cases where transcription only appears after ending the encounter.
+   - Status: Verified
+   - Evidence: `public/app.js`
 
 ## Old documentation verification
 

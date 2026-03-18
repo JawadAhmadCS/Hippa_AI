@@ -6,6 +6,8 @@ import {
   setLiveInsights,
   setRevenueTracker,
 } from "./appointment-store.js";
+import { buildChartNotes } from "./chart-note-service.js";
+import { attachEvidenceRefsToItems } from "./evidence-service.js";
 import { analyzeTranscriptForSuggestions } from "./openai-service.js";
 import { estimateRevenueTracker } from "./revenue-service.js";
 import {
@@ -66,32 +68,66 @@ export const runLiveAnalysisPipeline = async ({
 }) => {
   const startedAt = Date.now();
   const transcriptContext = getTranscriptContext(appointment.id, env.aiContextWindowSegments);
+  const transcriptSegments = appointment.transcriptSegments;
   const existingCodes = new Set(appointment.suggestions.map((item) => item.code));
   const existingIcd = new Set(appointment.icdSuggestions.map((item) => item.code));
 
-  const ruleSuggestions = inferRuleBasedSuggestions({
-    segment: transcriptContext,
-    existingCodes,
-  }).filter((item) => item.code !== baselineCode);
+  const ruleSuggestions = attachEvidenceRefsToItems(
+    inferRuleBasedSuggestions({
+      segment: transcriptContext,
+      existingCodes,
+    }).filter((item) => item.code !== baselineCode),
+    {
+      transcriptSegments,
+      cueSelector: (item) => [item.evidence, item.rationale, item.documentationNeeded, item.title, item.code],
+    }
+  );
   const mergedRuleSuggestions = addSuggestions(appointment.id, ruleSuggestions, "rule-engine") || {
     newlyAdded: [],
   };
 
-  const ruleIcdSuggestions = inferRuleBasedIcdSuggestions({
-    segment: transcriptContext,
-    existingIcd,
-  });
+  const ruleIcdSuggestions = attachEvidenceRefsToItems(
+    inferRuleBasedIcdSuggestions({
+      segment: transcriptContext,
+      existingIcd,
+    }),
+    {
+      transcriptSegments,
+      cueSelector: (item) => [item.evidence, item.rationale, item.description, item.code],
+    }
+  );
   const mergedRuleIcd = addIcdSuggestions(appointment.id, ruleIcdSuggestions, "rule-engine") || {
     newlyAdded: [],
   };
 
-  const ruleGuidance = inferRuleBasedGuidance({ segment: transcriptContext });
-  const ruleMissedBillables = detectRuleBasedMissedBillables({
-    segment: transcriptContext,
-    suggestions: appointment.suggestions,
-    baselineCode,
+  const ruleGuidance = attachEvidenceRefsToItems(inferRuleBasedGuidance({ segment: transcriptContext }), {
+    transcriptSegments,
+    cueSelector: (item) => [item.prompt, item.rationale, item.evidence],
   });
-  const ruleDocumentationGaps = detectRuleBasedDocumentationGaps({ segment: transcriptContext });
+  const ruleMissedBillables = attachEvidenceRefsToItems(
+    detectRuleBasedMissedBillables({
+      segment: transcriptContext,
+      suggestions: appointment.suggestions,
+      baselineCode,
+    }),
+    {
+      transcriptSegments,
+      cueSelector: (item) => [
+        item.component,
+        item.reason,
+        item.nextPrompt,
+        item.evidence,
+        item.potentialCode,
+      ],
+    }
+  );
+  const ruleDocumentationGaps = attachEvidenceRefsToItems(
+    detectRuleBasedDocumentationGaps({ segment: transcriptContext }),
+    {
+      transcriptSegments,
+      cueSelector: (item) => [item.gap, item.impact, item.recommendedPrompt, item.evidence],
+    }
+  );
 
   let aiModel = null;
   let aiSkipReason = null;
@@ -133,9 +169,21 @@ export const runLiveAnalysisPipeline = async ({
         aiLatencyMs = Date.now() - aiStart;
         aiModel = aiResult.model;
 
-        const normalizedAiSuggestions = normalizeAiSuggestions(aiResult.cptSuggestions)
-          .filter((item) => item.code !== baselineCode)
-          .filter((item) => Number(item.confidence || 0) >= 0.62);
+        const normalizedAiSuggestions = attachEvidenceRefsToItems(
+          normalizeAiSuggestions(aiResult.cptSuggestions)
+            .filter((item) => item.code !== baselineCode)
+            .filter((item) => Number(item.confidence || 0) >= 0.62),
+          {
+            transcriptSegments,
+            cueSelector: (item) => [
+              item.evidence,
+              item.rationale,
+              item.documentationNeeded,
+              item.title,
+              item.code,
+            ],
+          }
+        );
 
         mergedAiSuggestions = addSuggestions(
           appointment.id,
@@ -143,16 +191,43 @@ export const runLiveAnalysisPipeline = async ({
           "openai-analysis"
         ) || { newlyAdded: [] };
 
-        const normalizedIcd = normalizeAiIcdSuggestions(aiResult.icdSuggestions).filter(
-          (item) => Number(item.confidence || 0) >= 0.45
+        const normalizedIcd = attachEvidenceRefsToItems(
+          normalizeAiIcdSuggestions(aiResult.icdSuggestions).filter(
+            (item) => Number(item.confidence || 0) >= 0.45
+          ),
+          {
+            transcriptSegments,
+            cueSelector: (item) => [item.evidence, item.rationale, item.description, item.code],
+          }
         );
         mergedAiIcd = addIcdSuggestions(appointment.id, normalizedIcd, "openai-analysis") || {
           newlyAdded: [],
         };
 
-        aiGuidance = normalizeAiGuidance(aiResult.realTimePrompts);
-        aiMissedBillables = normalizeAiMissedBillables(aiResult.missedBillables);
-        aiDocumentationGaps = normalizeAiDocumentationGaps(aiResult.documentationGaps);
+        aiGuidance = attachEvidenceRefsToItems(normalizeAiGuidance(aiResult.realTimePrompts), {
+          transcriptSegments,
+          cueSelector: (item) => [item.evidence, item.prompt, item.rationale],
+        });
+        aiMissedBillables = attachEvidenceRefsToItems(
+          normalizeAiMissedBillables(aiResult.missedBillables),
+          {
+            transcriptSegments,
+            cueSelector: (item) => [
+              item.evidence,
+              item.component,
+              item.reason,
+              item.nextPrompt,
+              item.potentialCode,
+            ],
+          }
+        );
+        aiDocumentationGaps = attachEvidenceRefsToItems(
+          normalizeAiDocumentationGaps(aiResult.documentationGaps),
+          {
+            transcriptSegments,
+            cueSelector: (item) => [item.evidence, item.gap, item.impact, item.recommendedPrompt],
+          }
+        );
       } catch (error) {
         aiSkipReason = error?.message === "OpenAI analysis timed out." ? "openai-timeout" : "openai-error";
       }
@@ -170,6 +245,9 @@ export const runLiveAnalysisPipeline = async ({
     guidance: guidanceItems,
     documentationGaps,
     missedBillables,
+  });
+  const chartNotes = buildChartNotes({
+    transcriptSegments,
   });
 
   const tracker = estimateRevenueTracker({
@@ -191,6 +269,7 @@ export const runLiveAnalysisPipeline = async ({
     missedBillables,
     documentationGaps,
     documentationImprovements,
+    chartNotes,
     realTimePrompts: guidanceItems,
     latency,
     lastUpdatedAt: new Date().toISOString(),
@@ -215,6 +294,7 @@ export const runLiveAnalysisPipeline = async ({
     missedBillables,
     documentationGaps,
     documentationImprovements,
+    chartNotes,
     guidanceItems,
     revenueTracker: appointment.revenueTracker,
     analysis: {
@@ -225,4 +305,3 @@ export const runLiveAnalysisPipeline = async ({
     },
   };
 };
-

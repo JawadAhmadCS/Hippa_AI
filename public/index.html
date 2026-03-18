@@ -500,42 +500,53 @@
     }
 
     /* ── TRANSCRIPT ── */
-    .tx-line {
-      padding: 10px 12px;
-      border-radius: var(--radius-sm);
-      background: var(--surface2);
-      border-left: 3px solid transparent;
+    .note-card {
+      padding: 12px 13px;
+      border-radius: var(--radius-md);
+      background: linear-gradient(180deg, #ffffff, #f8fbff);
+      border: 1px solid var(--border);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.8);
       animation: fadeUp 0.25s ease;
+      position: relative;
     }
 
-    .tx-line.provider { border-left-color: var(--accent); }
-    .tx-line.patient  { border-left-color: #06b6d4; }
-
-    .tx-speaker {
+    .note-category {
       font-size: 9.5px;
       font-family: var(--mono);
-      font-weight: 500;
-      letter-spacing: 0.08em;
+      font-weight: 600;
+      letter-spacing: 0.12em;
       text-transform: uppercase;
-      color: var(--text-muted);
-      margin-bottom: 3px;
+      color: var(--accent);
+      margin-bottom: 5px;
     }
 
-    .tx-line.provider .tx-speaker { color: var(--accent); }
-    .tx-line.patient .tx-speaker  { color: #06b6d4; }
-
-    .tx-text {
+    .note-title {
       font-size: 13px;
+      font-weight: 700;
       color: var(--text);
+      line-height: 1.45;
+    }
+
+    .note-detail {
+      margin-top: 6px;
+      font-size: 12px;
+      color: var(--text-secondary);
       line-height: 1.55;
+    }
+
+    .note-meta {
+      margin-top: 8px;
+      font-size: 10px;
+      font-family: var(--mono);
+      color: var(--text-muted);
     }
 
     /* ── GUIDANCE ── */
     .guidance-item {
       padding: 11px 13px;
-      border-radius: var(--radius-sm);
-      background: var(--accent-light);
-      border: 1px solid rgba(37,99,235,0.15);
+      border-radius: var(--radius-md);
+      background: #f8fafc;
+      border: 1px solid rgba(148,163,184,0.22);
       animation: fadeUp 0.25s ease;
     }
 
@@ -553,6 +564,13 @@
       font-size: 12.5px;
       color: #1e3a8a;
       line-height: 1.55;
+    }
+
+    .guidance-detail {
+      margin-top: 5px;
+      font-size: 11px;
+      color: var(--text-secondary);
+      line-height: 1.45;
     }
 
     .divider {
@@ -647,6 +665,25 @@
       font-family: var(--mono);
       font-size: 9px;
       color: var(--text-muted);
+    }
+
+    .evidence-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      margin-bottom: 8px;
+      font-size: 10px;
+      font-family: var(--mono);
+      color: var(--evidence-color, var(--accent));
+    }
+
+    .evidence-chip::before {
+      content: "";
+      width: 8px;
+      height: 8px;
+      border-radius: 999px;
+      background: var(--evidence-color, var(--accent));
+      box-shadow: 0 0 0 3px rgba(37,99,235,0.12);
     }
 
     /* ── REVENUE SECTION ── */
@@ -787,6 +824,26 @@
     .status-tag.confirmed { background: var(--success-light); color: var(--success); }
     .status-tag.pending   { background: var(--warning-light); color: var(--warning); }
 
+    .is-clickable {
+      cursor: pointer;
+      border-left: 4px solid var(--evidence-color, var(--accent));
+    }
+
+    .is-clickable:hover {
+      box-shadow: 0 6px 18px rgba(15,23,42,0.08);
+      border-color: rgba(37,99,235,0.28);
+    }
+
+    .is-clickable:focus-visible {
+      outline: 2px solid var(--evidence-color, var(--accent));
+      outline-offset: 2px;
+    }
+
+    .table-row.is-clickable {
+      border-left-width: 4px;
+      padding-left: 12px;
+    }
+
     /* ── WAVEFORM ── */
     .waveform {
       display: flex;
@@ -832,6 +889,104 @@
 
     .empty-state svg { opacity: 0.3; }
     .empty-state p { font-size: 12px; font-family: var(--mono); }
+
+    .evidence-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(15,23,42,0.34);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.18s ease;
+      z-index: 180;
+    }
+
+    .evidence-backdrop.open {
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    .evidence-drawer {
+      position: fixed;
+      top: 0;
+      right: 0;
+      width: min(520px, 100vw);
+      height: 100vh;
+      background: var(--surface);
+      border-left: 1px solid var(--border);
+      box-shadow: var(--shadow-lg);
+      transform: translateX(100%);
+      transition: transform 0.22s ease;
+      z-index: 190;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .evidence-drawer.open {
+      transform: translateX(0);
+    }
+
+    .evidence-drawer-header {
+      padding: 18px 20px 14px;
+      border-bottom: 1px solid var(--border);
+      background: linear-gradient(180deg, #f8fafc, #ffffff);
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .evidence-drawer-title {
+      font-size: 15px;
+      font-weight: 700;
+      color: var(--text);
+      line-height: 1.35;
+    }
+
+    .evidence-drawer-subtitle {
+      margin-top: 6px;
+      font-size: 12px;
+      color: var(--text-secondary);
+      line-height: 1.5;
+    }
+
+    .evidence-drawer-body {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px 18px 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      scrollbar-width: thin;
+      scrollbar-color: #e2e8f0 transparent;
+    }
+
+    .evidence-line {
+      padding: 12px 13px;
+      border-radius: var(--radius-md);
+      border: 1px solid var(--border);
+      background: var(--surface2);
+      transition: border-color 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease;
+    }
+
+    .evidence-line.is-match {
+      border-color: var(--evidence-color, var(--accent));
+      box-shadow: 0 0 0 2px rgba(37,99,235,0.12);
+      transform: translateX(-2px);
+    }
+
+    .evidence-line-meta,
+    .evidence-line-submeta {
+      font-size: 10px;
+      font-family: var(--mono);
+      color: var(--text-muted);
+    }
+
+    .evidence-line-text {
+      margin: 7px 0 6px;
+      font-size: 12.5px;
+      color: var(--text);
+      line-height: 1.6;
+    }
 
     /* ── MULTI-VIEW CONTENT ── */
     .view-panel { display: none; }
@@ -1110,8 +1265,8 @@
     }
 
     /* ── SCROLLBAR ── */
-    .panel-body::-webkit-scrollbar, .table-body::-webkit-scrollbar { width: 4px; }
-    .panel-body::-webkit-scrollbar-thumb, .table-body::-webkit-scrollbar-thumb { background: #e2e8f0; border-radius: 4px; }
+    .panel-body::-webkit-scrollbar, .table-body::-webkit-scrollbar, .evidence-drawer-body::-webkit-scrollbar { width: 4px; }
+    .panel-body::-webkit-scrollbar-thumb, .table-body::-webkit-scrollbar-thumb, .evidence-drawer-body::-webkit-scrollbar-thumb { background: #e2e8f0; border-radius: 4px; }
 
     /* ── RESPONSIVE ── */
     @media (max-width: 1200px) {
@@ -1289,7 +1444,7 @@
           <div class="panel-header">
             <div class="panel-title">
               <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-              Live Transcript
+              AI Chart Notes
             </div>
             <div style="display:flex;align-items:center;gap:10px;">
               <div class="waveform" id="waveform">
@@ -1305,7 +1460,7 @@
           <div class="panel-body" id="transcriptFeed">
             <div class="empty-state">
               <svg width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v4M8 23h8"/></svg>
-              <p>Transcript appears here during encounter</p>
+              <p>AI chart notes appear here during encounter</p>
             </div>
           </div>
         </div>
@@ -1315,14 +1470,14 @@
           <div class="panel-header">
             <div class="panel-title">
               <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-              Doctor Guidance
+              Compliance Guidance
             </div>
             <span class="panel-badge active" id="guidanceBadge">AI Live</span>
           </div>
           <div class="panel-body" id="guidanceList" style="max-height:160px;">
             <div class="empty-state">
               <svg width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0 1 12 2.944a11.955 11.955 0 0 1-8.618 3.04A12.02 12.02 0 0 0 3 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
-              <p>Real-time prompts will appear here</p>
+              <p>Compliance prompts will appear here</p>
             </div>
           </div>
           <div class="divider"></div>
@@ -2036,6 +2191,24 @@
     </div>
   </div><!-- /main -->
 </div>
+
+<div class="evidence-backdrop" id="transcriptEvidenceBackdrop"></div>
+<aside class="evidence-drawer" id="transcriptEvidenceDrawer" aria-label="Transcript evidence drawer">
+  <div class="evidence-drawer-header">
+    <div>
+      <div class="evidence-drawer-title" id="transcriptEvidenceTitle">Transcript evidence</div>
+      <div class="evidence-drawer-subtitle" id="transcriptEvidenceSubtitle">
+        Matching transcript evidence will appear here.
+      </div>
+    </div>
+    <button class="btn btn-ghost" id="transcriptEvidenceClose" type="button">Close</button>
+  </div>
+  <div class="evidence-drawer-body" id="transcriptEvidenceBody">
+    <div class="empty-state">
+      <p>Transcript evidence will appear here.</p>
+    </div>
+  </div>
+</aside>
 
 <audio id="assistantAudio" autoplay></audio>
 <script type="module" src="./app.js"></script>

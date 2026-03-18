@@ -13,6 +13,7 @@ Rules:
 - Never upcode.
 - Never suggest medically unnecessary services.
 - Only suggest codes supported by explicit transcript evidence.
+- Include a brief transcript-supported evidence string for every item you return.
 - Do not suggest baseline E/M code if it is already assumed for the visit.
 - Guidance must be brief, concrete, and phrased as doctor prompts.
 - If a code may be billable but documentation is incomplete, list it under missedBillables and documentationGaps.
@@ -68,9 +69,10 @@ const outputSchema = {
           potentialCode: { type: "string" },
           reason: { type: "string" },
           nextPrompt: { type: "string" },
+          evidence: { type: "string" },
           confidence: { type: "number", minimum: 0, maximum: 1 },
         },
-        required: ["component", "potentialCode", "reason", "nextPrompt", "confidence"],
+        required: ["component", "potentialCode", "reason", "nextPrompt", "evidence", "confidence"],
       },
     },
     documentationGaps: {
@@ -84,8 +86,9 @@ const outputSchema = {
           severity: { type: "string", enum: ["high", "medium", "low"] },
           impact: { type: "string" },
           recommendedPrompt: { type: "string" },
+          evidence: { type: "string" },
         },
-        required: ["gap", "severity", "impact", "recommendedPrompt"],
+        required: ["gap", "severity", "impact", "recommendedPrompt", "evidence"],
       },
     },
     realTimePrompts: {
@@ -98,8 +101,9 @@ const outputSchema = {
           prompt: { type: "string" },
           rationale: { type: "string" },
           priority: { type: "string", enum: ["high", "medium", "low"] },
+          evidence: { type: "string" },
         },
-        required: ["prompt", "rationale", "priority"],
+        required: ["prompt", "rationale", "priority", "evidence"],
       },
     },
   },

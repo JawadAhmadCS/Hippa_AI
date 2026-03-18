@@ -1,4 +1,5 @@
 import { getCodeById } from "./codebook-service.js";
+import { mergeEvidenceRefs } from "./evidence-service.js";
 
 const RULES = [
   {
@@ -189,12 +190,14 @@ export const normalizeAiMissedBillables = (items) => {
       const potentialCode = String(item?.potentialCode || "").toUpperCase().trim();
       const reason = String(item?.reason || "").trim();
       const nextPrompt = String(item?.nextPrompt || "").trim();
+      const evidence = String(item?.evidence || "").trim();
       if (!component || !potentialCode || !reason || !nextPrompt) return null;
       return {
         component,
         potentialCode,
         reason,
         nextPrompt,
+        evidence,
         confidence: clampConfidence(item?.confidence ?? 0.55),
       };
     })
@@ -209,12 +212,14 @@ export const normalizeAiDocumentationGaps = (items) => {
       const gap = String(item?.gap || "").trim();
       const impact = String(item?.impact || "").trim();
       const recommendedPrompt = String(item?.recommendedPrompt || "").trim();
+      const evidence = String(item?.evidence || "").trim();
       if (!gap || !recommendedPrompt) return null;
       return {
         gap,
         impact,
         severity: clampPriority(item?.severity),
         recommendedPrompt,
+        evidence,
       };
     })
     .filter(Boolean);
@@ -282,10 +287,11 @@ export const normalizeAiGuidance = (items) => {
     .map((item) => {
       const prompt = String(item?.prompt || "").trim();
       const rationale = String(item?.rationale || "").trim();
+      const evidence = String(item?.evidence || "").trim();
       const rawPriority = String(item?.priority || "medium").toLowerCase().trim();
       const priority = allowedPriorities.has(rawPriority) ? rawPriority : "medium";
       if (!prompt) return null;
-      return { prompt, rationale, priority };
+      return { prompt, rationale, priority, evidence };
     })
     .filter(Boolean);
 };
@@ -408,21 +414,94 @@ export const buildDocumentationImprovements = ({
   missedBillables = [],
 }) => {
   const suggestions = [];
-  const pushUnique = (text, priority = "medium") => {
+  const buildActionText = (...candidates) => {
+    const combined = candidates
+      .map((value) => String(value || "").toLowerCase())
+      .join(" ");
+
+    if (containsAny(combined, ["duration", "minutes", "time-based", "counseling time", "time"])) {
+      return "Document duration to support higher E/M level";
+    }
+    if (containsAny(combined, ["chronic", "trend", "follow-up", "progression", "home blood pressure"])) {
+      return "Clarify chronicity of condition";
+    }
+    if (containsAny(combined, ["medication", "adherence", "side effect", "dose", "management"])) {
+      return "Confirm medication management";
+    }
+    if (containsAny(combined, ["severity", "functional impact", "symptom"])) {
+      return "Document symptom severity and impact";
+    }
+    if (containsAny(combined, ["lab", "medical necessity", "clinical indication", "testing"])) {
+      return "Document medical necessity for ordered labs";
+    }
+    if (containsAny(combined, ["screening", "score", "instrument", "phq"])) {
+      return "Record validated screening score";
+    }
+    if (containsAny(combined, ["risk", "data reviewed", "complexity", "mdm"])) {
+      return "Document MDM risk and data reviewed";
+    }
+
+    return "Clarify supporting documentation";
+  };
+  const buildDetail = (...candidates) =>
+    candidates.map((value) => String(value || "").trim()).find(Boolean) || "";
+  const pushUnique = ({ text, detail = "", priority = "medium", evidenceRefs = [], sourceType = "" }) => {
     const normalized = String(text || "").trim();
     if (!normalized) return;
-    if (suggestions.some((item) => item.text.toLowerCase() === normalized.toLowerCase())) return;
-    suggestions.push({ text: normalized, priority: clampPriority(priority) });
+
+    const existing = suggestions.find((item) => item.text.toLowerCase() === normalized.toLowerCase());
+    if (existing) {
+      existing.evidenceRefs = mergeEvidenceRefs(existing.evidenceRefs, evidenceRefs);
+      if (!existing.detail && detail) {
+        existing.detail = detail;
+      }
+      if (existing.priority !== "high" && priority === "high") {
+        existing.priority = "high";
+      }
+      return;
+    }
+
+    suggestions.push({
+      text: normalized,
+      detail: buildDetail(detail),
+      priority: clampPriority(priority),
+      sourceType,
+      evidenceRefs: mergeEvidenceRefs(evidenceRefs),
+    });
   };
 
   for (const gap of documentationGaps) {
-    pushUnique(gap.recommendedPrompt, gap.severity);
+    pushUnique({
+      text: buildActionText(gap.gap, gap.recommendedPrompt, gap.impact, gap.evidence),
+      detail: buildDetail(gap.recommendedPrompt, gap.impact, gap.gap),
+      priority: gap.severity,
+      sourceType: "documentation-gap",
+      evidenceRefs: gap.evidenceRefs,
+    });
   }
   for (const missing of missedBillables) {
-    pushUnique(missing.nextPrompt, "high");
+    pushUnique({
+      text: buildActionText(
+        missing.component,
+        missing.nextPrompt,
+        missing.reason,
+        missing.evidence,
+        missing.potentialCode
+      ),
+      detail: buildDetail(missing.nextPrompt, missing.reason, missing.component),
+      priority: "high",
+      sourceType: "missed-billable",
+      evidenceRefs: missing.evidenceRefs,
+    });
   }
   for (const item of guidance) {
-    pushUnique(item.prompt, item.priority);
+    pushUnique({
+      text: buildActionText(item.prompt, item.rationale, item.evidence),
+      detail: buildDetail(item.prompt, item.rationale),
+      priority: item.priority,
+      sourceType: "guidance",
+      evidenceRefs: item.evidenceRefs,
+    });
   }
 
   return suggestions.slice(0, 8);

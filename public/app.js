@@ -9,7 +9,9 @@ const state = {
   lastTranscriptNormalized: "",
   lastTranscriptAt: 0,
   lastServerTranscriptCount: 0,
-  interimTranscriptNode: null,
+  interimTranscriptText: "",
+  backgroundTranscriptSegments: [],
+  chartNotes: [],
   lastAssistantMessage: "",
   lastThrottleLogAt: 0,
   suggestionStream: null,
@@ -176,6 +178,12 @@ const ui = {
   hipaaAuditDoctorFilter: document.getElementById("hipaaAuditDoctorFilter"),
   refreshAuditLogsBtn: document.getElementById("refreshAuditLogsBtn"),
   hipaaAuditLogList: document.getElementById("hipaaAuditLogList"),
+  evidenceDrawer: document.getElementById("transcriptEvidenceDrawer"),
+  evidenceBackdrop: document.getElementById("transcriptEvidenceBackdrop"),
+  evidenceCloseBtn: document.getElementById("transcriptEvidenceClose"),
+  evidenceTitle: document.getElementById("transcriptEvidenceTitle"),
+  evidenceSubtitle: document.getElementById("transcriptEvidenceSubtitle"),
+  evidenceBody: document.getElementById("transcriptEvidenceBody"),
 };
 
 const safeNumber = (value) => Number(value || 0).toFixed(2);
@@ -304,96 +312,186 @@ const closeSuggestionStream = () => {
   state.suggestionStream = null;
 };
 
-const transcriptLineHtml = ({ source, cleanedText, rawText, quality, pending = false, errorText = "" }) => {
-  const cleaned = String(cleanedText || "").trim();
-  const raw = String(rawText || "").trim();
-  const confidencePct = Math.round((Number(quality?.confidence || 0) || 0) * 100);
+const evidencePalette = ["#2563eb", "#059669", "#d97706", "#db2777", "#0f766e", "#7c3aed"];
 
-  const details = [];
-  if (raw && cleaned && raw.toLowerCase() !== cleaned.toLowerCase()) {
-    details.push(`Cleaned from: ${raw}`);
-  }
-  if (confidencePct > 0) {
-    details.push(`Quality: ${confidencePct}% (${quality?.method || "n/a"})`);
-  }
-  if (pending) {
-    details.push("Syncing...");
-  }
-  if (errorText) {
-    details.push(errorText);
+const hashText = (value) =>
+  String(value || "")
+    .split("")
+    .reduce((total, char) => (total * 31 + char.charCodeAt(0)) >>> 0, 0);
+
+const getEvidenceKey = (prefix, item = {}) =>
+  [
+    prefix,
+    item.code,
+    item.text,
+    item.prompt,
+    item.potentialCode,
+    item.id,
+    item.sourceType,
+  ]
+    .filter(Boolean)
+    .join(":");
+
+const getEvidenceColor = (key) => evidencePalette[hashText(key) % evidencePalette.length];
+
+const getSortedTranscriptSegments = () =>
+  [...state.backgroundTranscriptSegments].sort(
+    (left, right) =>
+      Number(left.sequence || 0) - Number(right.sequence || 0) ||
+      new Date(left.at || 0).getTime() - new Date(right.at || 0).getTime()
+  );
+
+const storeTranscriptSegment = (segment) => {
+  const segmentId = String(segment?.id || "").trim();
+  if (!segmentId) return;
+
+  const nextSegment = {
+    id: segmentId,
+    sequence: Number(segment?.sequence || 0),
+    at: segment?.at || new Date().toISOString(),
+    source: String(segment?.source || "transcript").trim(),
+    rawText: String(segment?.rawText || "").trim(),
+    cleanedText: String(segment?.cleanedText || segment?.rawText || "").trim(),
+    quality: segment?.quality || null,
+  };
+
+  const existingIndex = state.backgroundTranscriptSegments.findIndex((item) => item.id === segmentId);
+  if (existingIndex >= 0) {
+    state.backgroundTranscriptSegments.splice(existingIndex, 1, nextSegment);
+    return;
   }
 
-  const detailHtml = details
-    .map((line) => `<div class="tx-text" style="font-size:11px;color:#94a3b8">${escapeHtml(line)}</div>`)
-    .join("");
-
-  return `
-    <div class="tx-speaker">${escapeHtml(source)}</div>
-    <div class="tx-text">${escapeHtml(cleaned || raw)}</div>
-    ${detailHtml}
-  `;
+  state.backgroundTranscriptSegments.push(nextSegment);
 };
 
-const upsertTranscriptLine = (
-  line,
-  { source, cleanedText, rawText, quality, pending = false, errorText = "" }
-) => {
-  line.className = "tx-line provider";
-  line.innerHTML = transcriptLineHtml({
-    source,
-    cleanedText,
-    rawText,
-    quality,
-    pending,
-    errorText,
+const closeEvidenceDrawer = () => {
+  ui.evidenceDrawer?.classList.remove("open");
+  ui.evidenceBackdrop?.classList.remove("open");
+};
+
+const openEvidenceDrawer = ({ title, subtitle = "", refs = [], evidenceKey = "" }) => {
+  if (!ui.evidenceDrawer || !ui.evidenceBody) return;
+
+  const transcript = getSortedTranscriptSegments();
+  const matchedIds = new Set((refs || []).map((ref) => String(ref?.segmentId || "").trim()).filter(Boolean));
+  const accent = getEvidenceColor(evidenceKey || title);
+
+  ui.evidenceTitle.textContent = title;
+  ui.evidenceSubtitle.textContent =
+    subtitle || (matchedIds.size ? "Matching transcript evidence is highlighted below." : "");
+
+  if (!transcript.length) {
+    ui.evidenceBody.innerHTML = emptyStateHtml("Transcript is still syncing in the background.");
+  } else {
+    ui.evidenceBody.innerHTML = transcript
+      .map((segment) => {
+        const isMatch = matchedIds.has(segment.id);
+        const sourceLabel = `${segment.source || "transcript"} • ${formatDateTime(segment.at)}`;
+        const qualityPct = Math.round((Number(segment.quality?.confidence || 0) || 0) * 100);
+        return `
+          <div class="evidence-line${isMatch ? " is-match" : ""}" data-segment-id="${escapeHtml(
+            segment.id
+          )}" style="--evidence-color:${accent}">
+            <div class="evidence-line-meta">${escapeHtml(sourceLabel)}</div>
+            <div class="evidence-line-text">${escapeHtml(segment.cleanedText || segment.rawText || "")}</div>
+            <div class="evidence-line-submeta">${escapeHtml(
+              qualityPct > 0 ? `Quality ${qualityPct}%` : "Saved transcript evidence"
+            )}</div>
+          </div>
+        `;
+      })
+      .join("");
+  }
+
+  ui.evidenceDrawer.classList.add("open");
+  ui.evidenceBackdrop?.classList.add("open");
+
+  requestAnimationFrame(() => {
+    const firstMatch = ui.evidenceBody.querySelector(".evidence-line.is-match");
+    firstMatch?.scrollIntoView({ block: "center", behavior: "smooth" });
   });
 };
 
-const addTranscriptLine = (
-  source,
-  cleanedText,
-  rawText,
-  quality,
-  { pending = false, errorText = "" } = {}
-) => {
-  removeEmptyStates(ui.transcriptFeed);
-  const line = document.createElement("div");
-  upsertTranscriptLine(line, { source, cleanedText, rawText, quality, pending, errorText });
-  ui.transcriptFeed.prepend(line);
-  return line;
+const bindEvidenceTrigger = (element, { title, subtitle = "", refs = [], evidenceKey = "" }) => {
+  if (!element || !Array.isArray(refs) || refs.length === 0) return;
+
+  const accent = getEvidenceColor(evidenceKey || title);
+  element.classList.add("is-clickable");
+  element.style.setProperty("--evidence-color", accent);
+  element.setAttribute("role", "button");
+  element.tabIndex = 0;
+
+  const open = () =>
+    openEvidenceDrawer({
+      title,
+      subtitle,
+      refs,
+      evidenceKey,
+    });
+
+  element.addEventListener("click", open);
+  element.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    open();
+  });
+};
+
+const renderChartNotes = (notes) => {
+  state.chartNotes = Array.isArray(notes) ? notes : [];
+  ui.transcriptFeed.innerHTML = "";
+
+  const items = state.chartNotes.slice(0, 6);
+  if (!items.length) {
+    if (state.encounterActive) {
+      ui.transcriptFeed.innerHTML = emptyStateHtml(
+        "Listening and drafting chart notes while the transcript saves in the background"
+      );
+      return;
+    }
+
+    ui.transcriptFeed.innerHTML = emptyStateHtml("AI chart notes appear here during encounter");
+    return;
+  }
+
+  for (const note of items) {
+    const card = document.createElement("div");
+    card.className = "note-card";
+    card.innerHTML = `
+      <div class="note-category">${escapeHtml(note.category || "Chart Note")}</div>
+      <div class="note-title">${escapeHtml(note.text || "Encounter note captured.")}</div>
+      ${
+        note.detail
+          ? `<div class="note-detail">${escapeHtml(note.detail)}</div>`
+          : ""
+      }
+      <div class="note-meta">${
+        Array.isArray(note.evidenceRefs) && note.evidenceRefs.length
+          ? "Click to open supporting transcript evidence"
+          : "Saved from live encounter analysis"
+      }</div>
+    `;
+
+    bindEvidenceTrigger(card, {
+      title: note.text || "Chart note evidence",
+      subtitle: note.detail || "Supporting transcript evidence",
+      refs: note.evidenceRefs || [],
+      evidenceKey: getEvidenceKey("note", note),
+    });
+
+    ui.transcriptFeed.appendChild(card);
+  }
 };
 
 const clearInterimTranscript = () => {
-  if (!state.interimTranscriptNode) return;
-  state.interimTranscriptNode.remove();
-  state.interimTranscriptNode = null;
+  state.interimTranscriptText = "";
 };
 
-const setInterimTranscript = (source, text) => {
-  const trimmed = String(text || "").trim();
-  if (!trimmed) {
-    clearInterimTranscript();
-    return;
+const setInterimTranscript = (_source, text) => {
+  state.interimTranscriptText = String(text || "").trim();
+  if (!state.chartNotes.length && state.encounterActive) {
+    renderChartNotes(state.chartNotes);
   }
-
-  if (!state.interimTranscriptNode) {
-    state.interimTranscriptNode = addTranscriptLine(
-      source,
-      trimmed,
-      trimmed,
-      { confidence: 0.4, method: "interim" },
-      { pending: true }
-    );
-    return;
-  }
-
-  upsertTranscriptLine(state.interimTranscriptNode, {
-    source,
-    cleanedText: trimmed,
-    rawText: trimmed,
-    quality: { confidence: 0.4, method: "interim" },
-    pending: true,
-  });
 };
 
 const addAssistantMessage = (text) => {
@@ -424,6 +522,8 @@ const renderSuggestions = (suggestions) => {
   for (const item of suggestions) {
     const card = document.createElement("div");
     card.className = "cpt-card";
+    const evidenceRefs = Array.isArray(item.evidenceRefs) ? item.evidenceRefs : [];
+    const evidenceKey = getEvidenceKey("cpt", item);
     const confidence = Math.max(0, Math.min(100, Math.round((item.confidence || 0) * 100)));
     const amount = item.estimatedAmount ? `+$${safeNumber(item.estimatedAmount)}` : `${confidence}%`;
     card.innerHTML = `
@@ -434,11 +534,24 @@ const renderSuggestions = (suggestions) => {
       <div class="cpt-desc"><strong>${escapeHtml(item.title || "CPT/HCPCS suggestion")}</strong></div>
       <div class="cpt-desc">${escapeHtml(item.rationale || "No rationale.")}</div>
       <div class="cpt-desc">Doc: ${escapeHtml(item.documentationNeeded || "Document medical necessity.")}</div>
+      ${
+        evidenceRefs.length
+          ? `<div class="evidence-chip" style="--evidence-color:${getEvidenceColor(evidenceKey)}">Open transcript evidence</div>`
+          : ""
+      }
       <div class="cpt-confidence-bar">
         <div class="cpt-confidence-fill" style="width:${confidence}%"></div>
       </div>
       <div class="cpt-confidence-label"><span>Confidence</span><span>${confidence}%</span></div>
     `;
+
+    bindEvidenceTrigger(card, {
+      title: `${item.code} recommendation`,
+      subtitle: item.rationale || item.documentationNeeded || "Supporting transcript evidence",
+      refs: evidenceRefs,
+      evidenceKey,
+    });
+
     ui.suggestionList.appendChild(card);
   }
 };
@@ -470,17 +583,35 @@ const renderRevenueTracker = (tracker) => {
 const renderGuidance = (guidanceItems) => {
   ui.guidanceList.innerHTML = "";
   if (!Array.isArray(guidanceItems) || guidanceItems.length === 0) {
-    ui.guidanceList.innerHTML = emptyStateHtml("No targeted prompts yet.");
+    ui.guidanceList.innerHTML = emptyStateHtml("No compliance prompts yet.");
     return;
   }
 
   for (const item of guidanceItems.slice(0, 6)) {
     const row = document.createElement("div");
     row.className = "guidance-item";
+    const evidenceKey = getEvidenceKey("guidance", item);
+    const mainText = item.text || item.prompt || "";
+    const detailText = item.detail || item.rationale || "";
     row.innerHTML = `
-      <div class="guidance-tag">${escapeHtml(parsePriority(item.priority))}</div>
-      <div class="guidance-text">${escapeHtml(item.prompt || "")}</div>
+      <div class="guidance-tag">${escapeHtml(
+        item.sourceType === "missed-billable"
+          ? "BILLING SUPPORT"
+          : item.sourceType === "documentation-gap"
+            ? "COMPLIANCE"
+            : parsePriority(item.priority)
+      )}</div>
+      <div class="guidance-text">${escapeHtml(mainText)}</div>
+      ${detailText ? `<div class="guidance-detail">${escapeHtml(detailText)}</div>` : ""}
     `;
+
+    bindEvidenceTrigger(row, {
+      title: mainText || "Compliance guidance",
+      subtitle: detailText || "Supporting transcript evidence",
+      refs: item.evidenceRefs || [],
+      evidenceKey,
+    });
+
     ui.guidanceList.appendChild(row);
   }
 };
@@ -500,6 +631,7 @@ const renderBillableCodes = (codes) => {
   for (const code of codes) {
     const row = document.createElement("div");
     row.className = "table-row";
+    const evidenceKey = getEvidenceKey("billable", code);
     const confidence = Number(code.confidence || 0);
     const status = confidence >= 0.8 ? "confirmed" : "pending";
     row.innerHTML = `
@@ -508,6 +640,15 @@ const renderBillableCodes = (codes) => {
       <div class="table-amount">$${safeNumber(code.estimatedAmount)}</div>
       <div><span class="status-tag ${status}">${status.charAt(0).toUpperCase() + status.slice(1)}</span></div>
     `;
+
+    bindEvidenceTrigger(row, {
+      title: `${code.code} billable code`,
+      subtitle:
+        code.rationale || code.evidence || "This code is currently selected based on transcript evidence.",
+      refs: code.evidenceRefs || [],
+      evidenceKey,
+    });
+
     ui.billableCodesList.appendChild(row);
   }
 };
@@ -1390,7 +1531,7 @@ const formatGuidanceText = (guidanceItems) => {
   }
   return guidanceItems
     .slice(0, 3)
-    .map((item, index) => `${index + 1}. ${item.prompt}`)
+    .map((item, index) => `${index + 1}. ${item.text || item.prompt || ""}`)
     .join(" | ");
 };
 
@@ -1412,8 +1553,8 @@ const summarizeAssistantUpdate = ({
 
   const guidanceText = formatGuidanceText(guidanceItems);
   const guidancePart = guidanceText
-    ? `Doctor next prompts: ${guidanceText}`
-    : "Doctor next prompts: continue collecting encounter details (duration, severity, and plan).";
+    ? `Compliance prompts: ${guidanceText}`
+    : "Compliance prompts: continue collecting encounter details (duration, severity, and plan).";
 
   const missedPart = missedBillables.length
     ? `Missed billables: ${missedBillables
@@ -1441,15 +1582,20 @@ const applyAnalysisPayload = (payload) => {
   if (!isNewest) return;
 
   state.lastServerTranscriptCount = transcriptCount;
+  if (payload.processedSegment) {
+    storeTranscriptSegment(payload.processedSegment);
+  }
+  state.chartNotes = Array.isArray(payload.chartNotes) ? payload.chartNotes : [];
+  renderChartNotes(state.chartNotes);
   renderSuggestions(payload.allSuggestions || []);
   renderRevenueTracker(payload.revenueTracker || {});
-  renderGuidance(payload.guidance?.items || []);
+  renderGuidance(payload.documentation?.improvements || []);
   renderBillableCodes(payload.revenueTracker?.billableCodes || []);
 
   addAssistantMessage(
     summarizeAssistantUpdate({
       suggestions: payload.newlyAddedSuggestions || [],
-      guidanceItems: payload.guidance?.items || [],
+      guidanceItems: payload.documentation?.improvements || [],
       model: payload.analysis?.model,
       tracker: payload.revenueTracker,
       missedBillables: payload.missedBillables || [],
@@ -1475,6 +1621,9 @@ const submitTranscriptSegment = async (text, source) => {
     method: "POST",
     body: JSON.stringify({ segment: text, source }),
   });
+  if (payload.processedSegment) {
+    storeTranscriptSegment(payload.processedSegment);
+  }
   applyAnalysisPayload(payload);
   return payload;
 };
@@ -1487,6 +1636,12 @@ const startSuggestionStream = () => {
   stream.addEventListener("analysis.update", (event) => {
     const payload = JSON.parse(event.data || "{}");
     applyAnalysisPayload(payload);
+  });
+  stream.addEventListener("transcript.accepted", (event) => {
+    const payload = JSON.parse(event.data || "{}");
+    if (payload.segment) {
+      storeTranscriptSegment(payload.segment);
+    }
   });
   stream.addEventListener("transcript.partial", (event) => {
     const payload = JSON.parse(event.data || "{}");
@@ -1515,7 +1670,7 @@ const shouldSkipDuplicateSegment = (text) => {
   return false;
 };
 
-const syncTranscriptSubmission = async ({ text, source, transcriptLine }) => {
+const syncTranscriptSubmission = async ({ text, source }) => {
   try {
     const payload = await submitTranscriptSegment(text, source);
     if (!payload) return;
@@ -1527,28 +1682,12 @@ const syncTranscriptSubmission = async ({ text, source, transcriptLine }) => {
       quality: { confidence: 0.5, method: "fallback" },
     };
 
-    upsertTranscriptLine(transcriptLine, {
-      source: processed.source || source,
-      cleanedText: processed.cleanedText || text,
-      rawText: processed.rawText || text,
-      quality: processed.quality || null,
-      pending: false,
-    });
-
     const raw = String(processed.rawText || "").trim().toLowerCase();
     const cleaned = String(processed.cleanedText || "").trim().toLowerCase();
     if (raw && cleaned && raw !== cleaned) {
       addLog("Transcript auto-cleanup applied for noisy ASR text.", "good");
     }
   } catch (error) {
-    upsertTranscriptLine(transcriptLine, {
-      source,
-      cleanedText: text,
-      rawText: text,
-      quality: { confidence: 0.3, method: "sync-error" },
-      pending: false,
-      errorText: `sync failed: ${error.message}`,
-    });
     addLog(`Transcript submission failed: ${error.message}`, "warn");
   }
 };
@@ -1556,15 +1695,7 @@ const syncTranscriptSubmission = async ({ text, source, transcriptLine }) => {
 const handleTranscriptSegment = (text, source) => {
   if (shouldSkipDuplicateSegment(text)) return;
   clearInterimTranscript();
-
-  const transcriptLine = addTranscriptLine(
-    source,
-    text,
-    text,
-    { confidence: 0.45, method: "live-local" },
-    { pending: true }
-  );
-  syncTranscriptSubmission({ text, source, transcriptLine });
+  syncTranscriptSubmission({ text, source });
 };
 
 const startAzureSpeech = async () => {
@@ -1669,7 +1800,13 @@ const startBrowserSpeechFallback = () => {
 const startRecording = () => {
   if (!state.micStream) return;
   state.recordingChunks = [];
-  const recorder = new MediaRecorder(state.micStream, { mimeType: "audio/webm" });
+  const preferredMimeType =
+    typeof MediaRecorder !== "undefined" && MediaRecorder.isTypeSupported?.("audio/webm")
+      ? "audio/webm"
+      : "";
+  const recorder = preferredMimeType
+    ? new MediaRecorder(state.micStream, { mimeType: preferredMimeType })
+    : new MediaRecorder(state.micStream);
 
   recorder.ondataavailable = (event) => {
     if (event.data && event.data.size > 0) {
@@ -1712,9 +1849,17 @@ const stopRecordingAndUpload = async () => {
 };
 
 const resetEncounterPanels = () => {
-  ui.transcriptFeed.innerHTML = emptyStateHtml("Transcript appears here during encounter");
+  state.backgroundTranscriptSegments = [];
+  state.chartNotes = [];
+  state.interimTranscriptText = "";
+  closeEvidenceDrawer();
+  ui.transcriptFeed.innerHTML = emptyStateHtml(
+    state.encounterActive
+      ? "Listening and drafting chart notes while the transcript saves in the background"
+      : "AI chart notes appear here during encounter"
+  );
   ui.chatFeed.innerHTML = emptyStateHtml("Assistant analysis will appear here");
-  ui.guidanceList.innerHTML = emptyStateHtml("Real-time prompts will appear here");
+  ui.guidanceList.innerHTML = emptyStateHtml("Compliance prompts will appear here");
   ui.suggestionList.innerHTML = emptyStateHtml("CPT codes surface as encounter progresses");
   ui.billableCodesList.innerHTML = emptyStateHtml("No codes logged yet");
 
@@ -1782,12 +1927,12 @@ const startEncounter = async () => {
   startSuggestionStream();
 
   state.micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-  startRecording();
-
   const azureStarted = await startAzureSpeech();
   if (!azureStarted) {
     startBrowserSpeechFallback();
   }
+  startRecording();
+  setTranscriptBadge("Listening", true);
 
   ui.startBtn.disabled = true;
   ui.stopBtn.disabled = false;
@@ -1813,6 +1958,12 @@ const stopEncounter = async () => {
     addLog("Browser fallback speech stopped.");
   }
 
+  try {
+    await stopRecordingAndUpload();
+  } catch (error) {
+    addLog(error.message, "warn");
+  }
+
   if (state.micStream) {
     state.micStream.getTracks().forEach((track) => track.stop());
     state.micStream = null;
@@ -1820,12 +1971,7 @@ const stopEncounter = async () => {
 
   ui.waveform?.classList.remove("active");
   setTranscriptBadge("Stopped", false);
-
-  try {
-    await stopRecordingAndUpload();
-  } catch (error) {
-    addLog(error.message, "warn");
-  }
+  closeEvidenceDrawer();
 
   setSessionUiState({
     active: false,
@@ -2020,6 +2166,14 @@ ui.startBtn?.addEventListener("click", () => {
 
 ui.stopBtn?.addEventListener("click", () => {
   stopEncounter().catch((error) => addLog(`Stop failed: ${error.message}`, "warn"));
+});
+
+ui.evidenceCloseBtn?.addEventListener("click", closeEvidenceDrawer);
+ui.evidenceBackdrop?.addEventListener("click", closeEvidenceDrawer);
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") {
+    closeEvidenceDrawer();
+  }
 });
 
 ui.consentGiven?.addEventListener("change", setConsentBadgeState);

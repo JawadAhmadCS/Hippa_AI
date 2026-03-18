@@ -3,13 +3,24 @@ import { getCodeById, getPayerMultiplier } from "./codebook-service.js";
 const roundCurrency = (value) => Number(value.toFixed(2));
 const isEmCode = (code) => /^9921[3-5]$/.test(String(code || ""));
 
-const toBillableEntry = ({ cpt, payerMultiplier, type, source, confidence, evidence }) => ({
+const toBillableEntry = ({
+  cpt,
+  payerMultiplier,
+  type,
+  source,
+  confidence,
+  evidence,
+  evidenceRefs = [],
+  rationale = "",
+}) => ({
   code: cpt.code,
   title: cpt.title,
   type,
   source,
   confidence: Number(confidence || 0),
   evidence: String(evidence || "").slice(0, 220),
+  rationale: String(rationale || "").trim(),
+  evidenceRefs: Array.isArray(evidenceRefs) ? evidenceRefs : [],
   estimatedAmount: roundCurrency(cpt.medicareRate * payerMultiplier),
 });
 
@@ -27,6 +38,7 @@ export const estimateRevenueTracker = ({ insurancePlan, baselineCode = "99213", 
         source: "baseline",
         confidence: 1,
         evidence: "Baseline established patient follow-up visit.",
+        rationale: "Default baseline established visit before supported upgrades are identified.",
       })
     : null;
 
@@ -48,6 +60,8 @@ export const estimateRevenueTracker = ({ insurancePlan, baselineCode = "99213", 
         source: suggestion.source || "transcript",
         confidence: suggestion.confidence,
         evidence: suggestion.evidence,
+        evidenceRefs: suggestion.evidenceRefs,
+        rationale: suggestion.rationale,
       });
 
       if (!selectedEm || candidate.estimatedAmount > selectedEm.estimatedAmount) {
@@ -66,6 +80,8 @@ export const estimateRevenueTracker = ({ insurancePlan, baselineCode = "99213", 
           source: suggestion.source || "transcript",
           confidence: suggestion.confidence,
           evidence: suggestion.evidence,
+          evidenceRefs: suggestion.evidenceRefs,
+          rationale: suggestion.rationale,
         })
       );
     }
