@@ -1258,6 +1258,42 @@
       font-family: var(--mono);
     }
 
+    .note-editor {
+      min-height: 74px;
+      height: auto;
+      padding: 10px;
+      white-space: pre-wrap;
+      line-height: 1.5;
+      overflow-wrap: anywhere;
+    }
+
+    .auth-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(15, 23, 42, 0.52);
+      z-index: 900;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 18px;
+    }
+
+    .auth-overlay.open {
+      display: flex;
+    }
+
+    .auth-card {
+      width: min(440px, 100%);
+      border-radius: 14px;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      box-shadow: var(--shadow-lg);
+      padding: 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
     /* ── ANIMATIONS ── */
     @keyframes fadeUp {
       from { opacity: 0; transform: translateY(6px); }
@@ -1316,6 +1352,10 @@
       <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
       Past Encounters
     </a>
+    <a class="nav-item" data-view="billing" href="#">
+      <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M3 7h18"/><path d="M3 12h18"/><path d="M3 17h18"/></svg>
+      Billing Queue
+    </a>
     <a class="nav-item" data-view="revenue" href="#">
       <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
       Revenue Reports
@@ -1367,6 +1407,11 @@
           <div class="status-dot"></div>
           <span id="sessionText">Session Idle</span>
         </div>
+        <div id="authUserPill" class="status-pill">
+          <div class="status-dot"></div>
+          <span id="authUserText">Not signed in</span>
+        </div>
+        <button class="btn btn-ghost" id="logoutBtn" type="button" style="height:34px;padding:0 12px;">Logout</button>
       </div>
     </header>
 
@@ -1507,6 +1552,79 @@
         </div>
       </div>
 
+      <!-- PROVIDER NOTE EDITOR -->
+      <div class="setup-card">
+        <div class="card-header">
+          <div class="card-title">
+            <div class="card-title-icon">
+              <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+            </div>
+            Provider Note Editor
+          </div>
+          <div class="inline-actions">
+            <span class="panel-badge" id="noteStatusBadge">Draft</span>
+            <span class="card-subtitle" id="noteAnalysisStatus">Analysis idle</span>
+            <button class="btn btn-ghost" id="recalculateNoteBtn" type="button">Recalculate Codes</button>
+            <button class="btn btn-ghost" id="saveNoteDraftBtn" type="button">Save Draft</button>
+            <button class="btn btn-primary" id="finalizeNoteBtn" type="button">Finalize</button>
+          </div>
+        </div>
+        <div class="setup-body settings-grid">
+          <div class="info-card">
+            <h3>Structured Clinical Note</h3>
+            <div class="form-field">
+              <label class="form-label" for="noteHpiEditor">HPI</label>
+              <div class="form-input note-editor" id="noteHpiEditor" contenteditable="true"></div>
+            </div>
+            <div class="form-field">
+              <label class="form-label" for="noteRosEditor">ROS</label>
+              <div class="form-input note-editor" id="noteRosEditor" contenteditable="true"></div>
+            </div>
+            <div class="form-field">
+              <label class="form-label" for="noteExamEditor">Exam</label>
+              <div class="form-input note-editor" id="noteExamEditor" contenteditable="true"></div>
+            </div>
+            <div class="form-field">
+              <label class="form-label" for="noteAssessmentEditor">Assessment</label>
+              <div class="form-input note-editor" id="noteAssessmentEditor" contenteditable="true"></div>
+            </div>
+            <div class="form-field">
+              <label class="form-label" for="notePlanEditor">Plan</label>
+              <div class="form-input note-editor" id="notePlanEditor" contenteditable="true"></div>
+            </div>
+            <div class="form-field">
+              <label class="form-label" for="noteAdditionalProvider">Additional Provider Notes / Clarifications</label>
+              <textarea class="form-input" id="noteAdditionalProvider" rows="4" style="height:auto;padding:10px;"></textarea>
+            </div>
+            <div class="form-field">
+              <label class="form-label" for="noteFreeText">Free-text additions</label>
+              <textarea class="form-input" id="noteFreeText" rows="4" style="height:auto;padding:10px;"></textarea>
+            </div>
+          </div>
+          <div class="info-card">
+            <h3>Coding + Documentation Support</h3>
+            <div class="helper-text">Current Recommended CPT</div>
+            <div class="pill-list" id="noteCptList"><span class="pill">No CPT suggestions</span></div>
+            <div class="helper-text" style="margin-top:10px;">Current Recommended ICD</div>
+            <div class="pill-list" id="noteIcdList"><span class="pill">No ICD suggestions</span></div>
+            <div class="helper-text" style="margin-top:10px;">Justification</div>
+            <div class="tiny-note" id="noteJustificationText">No current coding justification.</div>
+            <div class="helper-text" style="margin-top:10px;">Missing Documentation Prompts</div>
+            <div class="pill-list" id="noteMissingPrompts"><span class="pill">No prompts</span></div>
+            <div class="form-field" style="margin-top:12px;">
+              <label class="form-label" for="noteFinalCodesInput">Final CPT Codes Override (optional, comma-separated)</label>
+              <input class="form-input" id="noteFinalCodesInput" placeholder="e.g. 99214, 99406" />
+            </div>
+            <div class="form-field" style="margin-top:12px;">
+              <label class="form-label" for="overrideReasonInput">Provider Override Reason (optional)</label>
+              <textarea class="form-input" id="overrideReasonInput" rows="3" style="height:auto;padding:10px;" placeholder="e.g. clinical judgment, documentation limitation"></textarea>
+            </div>
+            <div class="helper-text" style="margin-top:10px;">Note Versions</div>
+            <div class="pill-list" id="noteVersionList"><span class="pill">No versions yet</span></div>
+          </div>
+        </div>
+      </div>
+
       <!-- REVENUE SECTION -->
       <div class="revenue-section">
 
@@ -1568,6 +1686,50 @@
       </div>
 
     </div><!-- /content -->
+
+    <!-- BILLING QUEUE -->
+    <div class="content view-panel" id="view-billing">
+      <div class="setup-card">
+        <div class="card-header">
+          <div class="card-title">
+            <div class="card-title-icon">
+              <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M3 7h18"/><path d="M3 12h18"/><path d="M3 17h18"/></svg>
+            </div>
+            Billing Queue (Finalized Only)
+          </div>
+          <div class="inline-actions">
+            <span class="card-subtitle" id="billingQueueSummary">No finalized notes</span>
+            <button class="btn btn-ghost" id="refreshBillingQueueBtn" type="button">Refresh</button>
+          </div>
+        </div>
+        <div class="setup-body">
+          <div class="split-two">
+            <div>
+              <table class="list-table">
+                <thead>
+                  <tr>
+                    <th>Appointment</th>
+                    <th>Finalized</th>
+                    <th>Approved Codes</th>
+                    <th>Confidence</th>
+                    <th>Open</th>
+                  </tr>
+                </thead>
+                <tbody id="billingQueueBody">
+                  <tr><td colspan="5" class="tiny-note">No finalized notes available.</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="info-card">
+              <h3>Final Note Preview</h3>
+              <div class="tiny-note" id="billingFinalNotePreview">Select a finalized item from queue.</div>
+              <div class="helper-text" style="margin-top:12px;">Approved CPT/ICD</div>
+              <div class="pill-list" id="billingApprovedCodes"><span class="pill">No codes selected.</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
 
     <!-- PAST ENCOUNTERS -->
     <div class="content view-panel" id="view-past">
@@ -2006,6 +2168,7 @@
               <select class="form-select" id="prefDefaultView">
                 <option value="live">Live Encounter</option>
                 <option value="past">Past Encounters</option>
+                <option value="billing">Billing Queue</option>
                 <option value="revenue">Revenue Reports</option>
                 <option value="settings">Settings</option>
                 <option value="codebook">CPT Codebook</option>
@@ -2190,6 +2353,36 @@
       </div>
     </div>
   </div><!-- /main -->
+</div>
+
+<div class="auth-overlay" id="authOverlay">
+  <div class="auth-card">
+    <h3>Secure Sign In</h3>
+    <p class="tiny-note">Login with password and 2FA to access PHI.</p>
+    <div class="stack-12">
+      <div class="form-field">
+        <label class="form-label" for="authUsername">Username</label>
+        <input class="form-input" id="authUsername" placeholder="provider1 / billing1 / admin1" />
+      </div>
+      <div class="form-field">
+        <label class="form-label" for="authPassword">Password</label>
+        <input class="form-input" id="authPassword" type="password" placeholder="Enter password" />
+      </div>
+      <button class="btn btn-primary" id="authPasswordBtn" type="button">Continue to 2FA</button>
+
+      <div id="auth2faBlock" style="display:none;">
+        <div class="helper-text" id="authSetupHint">Enter 6-digit TOTP code.</div>
+        <div class="tiny-note" id="authSetupSecret"></div>
+        <div class="form-field" style="margin-top:8px;">
+          <label class="form-label" for="authTotpCode">2FA Code</label>
+          <input class="form-input" id="authTotpCode" placeholder="123456" />
+        </div>
+        <button class="btn btn-primary" id="auth2faBtn" type="button" style="margin-top:8px;">Verify & Sign In</button>
+      </div>
+
+      <div class="tiny-note" id="authErrorText"></div>
+    </div>
+  </div>
 </div>
 
 <div class="evidence-backdrop" id="transcriptEvidenceBackdrop"></div>

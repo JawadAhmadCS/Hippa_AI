@@ -4,11 +4,22 @@ import express from "express";
 import multer from "multer";
 import { env, featureFlags } from "../config/env.js";
 import {
+  addOverrideRecord,
   addRecording,
   appendTranscriptSegment,
   createAppointment,
+  ensureNoteDraftVersion,
+  finalizeCurrentNote,
+  getCurrentNoteAnalysis,
+  getCurrentNoteVersion,
+  getFinalizedNotePacket,
   getAppointment,
+  listAppointmentRecords,
+  listNoteVersions,
   listAppointments,
+  setCurrentNoteAnalysis,
+  setRevenueTracker,
+  upsertDraftNoteVersion,
 } from "../services/appointment-store.js";
 import { listAuditEvents, writeAuditEvent } from "../services/audit-service.js";
 import {
@@ -28,6 +39,14 @@ import {
 import { normalizeTranscriptSegment } from "../services/transcript-service.js";
 import { buildRevenueCsv, buildRevenueReport } from "../services/reporting-service.js";
 import {
+  authenticateToken,
+  getAuthConstants,
+  loginWithPassword,
+  requiresRecentMfa,
+  revokeSession,
+  verifyLogin2fa,
+} from "../services/auth-service.js";
+import {
   addBaaDocument,
   getCodebookExtensions,
   getDoctorPreferences,
@@ -41,6 +60,7 @@ import {
   updateProductionReadinessSettings,
 } from "../services/platform-config-service.js";
 import { buildProductionReadinessStatus } from "../services/production-readiness-service.js";
+import { recalculateNoteCoding } from "../services/note-analysis-service.js";
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 30 * 1024 * 1024 } });
@@ -66,6 +86,48 @@ const withAsync = (handler) => async (request, response) => {
 
 const fireAndForgetAudit = (eventType, payload) => {
   writeAuditEvent(eventType, payload).catch(() => {});
+};
+
+const extractSessionToken = (request) => {
+  const fromQuery = String(request.query?.accessToken || "").trim();
+  if (fromQuery) return fromQuery;
+
+  const bearer = String(request.get("authorization") || "").trim();
+  if (bearer.toLowerCase().startsWith("bearer ")) {
+    return bearer.slice(7).trim();
+  }
+  return String(request.get("x-session-token") || "").trim();
+};
+
+const requireAuth = ({ roles = [], requireFreshMfa = false } = {}) => (request, response, next) => {
+  const token = extractSessionToken(request);
+  if (!token) {
+    response.status(401).json({ error: "Authentication required." });
+    return;
+  }
+
+  const session = authenticateToken(token);
+  if (!session) {
+    response.status(401).json({ error: "Session expired or invalid." });
+    return;
+  }
+
+  if (Array.isArray(roles) && roles.length && !roles.includes(session.role)) {
+    response.status(403).json({ error: "Forbidden for this role." });
+    return;
+  }
+
+  if (requireFreshMfa && !requiresRecentMfa(session, getAuthConstants().mfaFreshWindowMs)) {
+    response.status(403).json({
+      error: "Re-authentication required before this action.",
+      code: "recent_mfa_required",
+    });
+    return;
+  }
+
+  request.auth = session;
+  request.authToken = token;
+  next();
 };
 
 const normalizeDateOrNull = (value) => {
@@ -188,6 +250,35 @@ const buildTranscriptResponse = ({ appointment, processedSegment, pipelineResult
   },
 });
 
+const buildNotePayload = ({ appointment, version, analysis, includeVersions = false }) => {
+  const workflow = appointment.noteWorkflow || {};
+  return {
+    note: {
+      noteId: workflow.noteId,
+      status: workflow.status || "draft",
+      locked: Boolean(workflow.locked),
+      currentVersionId: workflow.currentVersionId || "",
+      finalizedVersionId: workflow.finalizedVersionId || "",
+      finalizedAt: workflow.finalizedAt || null,
+      version: version || null,
+      versions: includeVersions
+        ? listNoteVersions(appointment.id).map((item) => ({
+            versionId: item.versionId,
+            versionNumber: item.versionNumber,
+            versionType: item.versionType,
+            isFinal: item.isFinal,
+            createdBy: item.createdBy,
+            actorRole: item.actorRole,
+            createdAt: item.createdAt,
+            changeCount: Number(item?.diffFromPrior?.changeCount || 0),
+          }))
+        : undefined,
+      overrideRecords: workflow.overrideRecords || [],
+    },
+    codingAnalysis: analysis || null,
+  };
+};
+
 const processTranscriptSegment = async ({ appointment, rawSegment, source }) => {
   const baselineCode = "99213";
   const processedSegment = await normalizeTranscriptSegment({ rawText: rawSegment, source });
@@ -277,7 +368,118 @@ router.get("/health", (_request, response) => {
 });
 
 router.post(
+  "/auth/login",
+  withAsync(async (request, response) => {
+    const username = String(request.body.username || "").trim().toLowerCase();
+    const password = String(request.body.password || "");
+    if (!username || !password) {
+      response.status(400).json({ error: "Username and password are required." });
+      return;
+    }
+
+    const result = loginWithPassword({
+      username,
+      password,
+      ip: request.ip,
+      userAgent: request.get("user-agent"),
+    });
+    if (!result.ok) {
+      fireAndForgetAudit("auth.login.failed", {
+        username,
+        reason: result.error,
+        ip: request.ip,
+      });
+      response.status(401).json({ error: result.error || "Login failed." });
+      return;
+    }
+
+    fireAndForgetAudit("auth.login.password.accepted", {
+      username,
+      ip: request.ip,
+      mfaSetupRequired: Boolean(result.challenge?.mfaSetupRequired),
+    });
+    response.json(result.challenge);
+  })
+);
+
+router.post(
+  "/auth/2fa/verify",
+  withAsync(async (request, response) => {
+    const challengeId = String(request.body.challengeId || "").trim();
+    const code = String(request.body.code || "").trim();
+    if (!challengeId || !code) {
+      response.status(400).json({ error: "challengeId and code are required." });
+      return;
+    }
+
+    const result = verifyLogin2fa({
+      challengeId,
+      code,
+      ip: request.ip,
+      userAgent: request.get("user-agent"),
+    });
+    if (!result.ok) {
+      fireAndForgetAudit("auth.login.2fa.failed", {
+        challengeId,
+        ip: request.ip,
+        reason: result.error,
+      });
+      response.status(401).json({ error: result.error || "2FA verification failed." });
+      return;
+    }
+
+    fireAndForgetAudit("auth.login.success", {
+      userId: result.user?.id,
+      username: result.user?.username,
+      role: result.user?.role,
+      ip: request.ip,
+    });
+    response.json({
+      token: result.token,
+      expiresAt: result.expiresAt,
+      user: result.user,
+    });
+  })
+);
+
+router.post(
+  "/auth/logout",
+  requireAuth(),
+  withAsync(async (request, response) => {
+    revokeSession(request.authToken);
+    fireAndForgetAudit("auth.logout", {
+      userId: request.auth.userId,
+      username: request.auth.username,
+      role: request.auth.role,
+      sessionId: request.auth.sessionId,
+      ip: request.ip,
+    });
+    response.json({ ok: true });
+  })
+);
+
+router.get(
+  "/auth/me",
+  requireAuth(),
+  withAsync(async (request, response) => {
+    response.json({
+      user: {
+        id: request.auth.userId,
+        username: request.auth.username,
+        role: request.auth.role,
+        displayName: request.auth.displayName,
+      },
+      session: {
+        sessionId: request.auth.sessionId,
+        expiresAt: request.auth.expiresAt,
+      },
+    });
+  })
+);
+
+router.post(
   "/appointments",
+  requireAuth({ roles: ["provider", "admin"] }),
   withAsync(async (request, response) => {
     const doctorRef = String(request.body.doctorRef || "").trim();
     const patientRef = String(request.body.patientRef || "anonymous").trim();
@@ -323,12 +525,12 @@ router.post(
 
 router.get(
   "/appointments",
+  requireAuth({ roles: ["provider", "admin"] }),
   withAsync(async (request, response) => {
     const search = String(request.query.q || "").trim();
     const dateFrom = String(request.query.dateFrom || "").trim();
     const dateTo = String(request.query.dateTo || "").trim();
-    const appointments = filterAppointments({ search, dateFrom, dateTo });
-
+    let appointments = filterAppointments({ search, dateFrom, dateTo });
     response.json({
       appointments,
       filters: {
@@ -342,6 +544,7 @@ router.get(
 
 router.get(
   "/appointments/:appointmentId",
+  requireAuth({ roles: ["provider", "admin"] }),
   withAsync(async (request, response) => {
     const appointment = ensureAppointment(request.params.appointmentId, response);
     if (!appointment) return;
@@ -350,7 +553,264 @@ router.get(
 );
 
 router.get(
+  "/appointments/:appointmentId/note",
+  requireAuth({ roles: ["provider", "admin"] }),
+  withAsync(async (request, response) => {
+    const appointment = ensureAppointment(request.params.appointmentId, response);
+    if (!appointment) return;
+
+    const version = ensureNoteDraftVersion(appointment.id) || getCurrentNoteVersion(appointment.id);
+    if (!version) {
+      response.status(500).json({ error: "Unable to initialize note draft." });
+      return;
+    }
+
+    let analysis = getCurrentNoteAnalysis(appointment.id);
+    if (!analysis) {
+      analysis = await recalculateNoteCoding({
+        appointment,
+        noteContent: version.contentJson,
+      });
+      setCurrentNoteAnalysis(appointment.id, analysis);
+      setRevenueTracker(appointment.id, analysis.revenueTracker || appointment.revenueTracker);
+    }
+
+    response.json(
+      buildNotePayload({
+        appointment,
+        version,
+        analysis,
+        includeVersions: String(request.query.includeVersions || "false") === "true",
+      })
+    );
+  })
+);
+
+router.put(
+  "/appointments/:appointmentId/note",
+  requireAuth({ roles: ["provider", "admin"] }),
+  withAsync(async (request, response) => {
+    const appointment = ensureAppointment(request.params.appointmentId, response);
+    if (!appointment) return;
+
+    const currentVersion = ensureNoteDraftVersion(appointment.id) || getCurrentNoteVersion(appointment.id);
+    if (!currentVersion) {
+      response.status(500).json({ error: "Unable to load note version." });
+      return;
+    }
+
+    const allowAfterFinal = String(request.body.allowAfterFinal || "false").toLowerCase() === "true";
+    const content = request.body.content || currentVersion.contentJson;
+    const updated = upsertDraftNoteVersion({
+      appointmentId: appointment.id,
+      content,
+      actorId: request.auth.userId,
+      actorRole: request.auth.role,
+      allowAfterFinal,
+    });
+
+    if (updated?.error === "finalized-note-locked") {
+      response.status(409).json({
+        error: "Finalized note is read-only. Submit amendment workflow to continue.",
+        code: "finalized-note-locked",
+      });
+      return;
+    }
+
+    const version = updated?.version || currentVersion;
+    const analysis = await recalculateNoteCoding({
+      appointment,
+      noteContent: version.contentJson,
+    });
+    setCurrentNoteAnalysis(appointment.id, analysis);
+    setRevenueTracker(appointment.id, analysis.revenueTracker || appointment.revenueTracker);
+
+    const overrides = Array.isArray(request.body.overrides) ? request.body.overrides : [];
+    for (const item of overrides) {
+      const originalCode = String(item?.originalCode || "").trim().toUpperCase();
+      const finalCode = String(item?.finalCode || "").trim().toUpperCase();
+      const reason = String(item?.reason || "").trim();
+      if (!originalCode || !finalCode || originalCode === finalCode) continue;
+      addOverrideRecord({
+        appointmentId: appointment.id,
+        originalCode,
+        finalCode,
+        reason,
+        providerId: request.auth.userId,
+      });
+    }
+
+    fireAndForgetAudit("note.edited", {
+      appointmentId: appointment.id,
+      noteId: appointment.noteWorkflow?.noteId,
+      versionId: version.versionId,
+      actorId: request.auth.userId,
+      actorRole: request.auth.role,
+      changedFields: version?.diffFromPrior?.changedFields || [],
+      overrideCount: overrides.length,
+    });
+
+    response.json(
+      buildNotePayload({
+        appointment,
+        version,
+        analysis,
+        includeVersions: true,
+      })
+    );
+  })
+);
+
+router.post(
+  "/appointments/:appointmentId/note/recalculate",
+  requireAuth({ roles: ["provider", "admin"] }),
+  withAsync(async (request, response) => {
+    const appointment = ensureAppointment(request.params.appointmentId, response);
+    if (!appointment) return;
+
+    const current = ensureNoteDraftVersion(appointment.id) || getCurrentNoteVersion(appointment.id);
+    if (!current) {
+      response.status(500).json({ error: "Unable to load note version." });
+      return;
+    }
+
+    const content = request.body.content || current.contentJson;
+    const analysis = await recalculateNoteCoding({
+      appointment,
+      noteContent: content,
+    });
+    setCurrentNoteAnalysis(appointment.id, analysis);
+    setRevenueTracker(appointment.id, analysis.revenueTracker || appointment.revenueTracker);
+    response.json({ codingAnalysis: analysis });
+  })
+);
+
+router.post(
+  "/appointments/:appointmentId/note/finalize",
+  requireAuth({ roles: ["provider", "admin"], requireFreshMfa: true }),
+  withAsync(async (request, response) => {
+    const appointment = ensureAppointment(request.params.appointmentId, response);
+    if (!appointment) return;
+
+    const current = ensureNoteDraftVersion(appointment.id) || getCurrentNoteVersion(appointment.id);
+    if (!current) {
+      response.status(500).json({ error: "Unable to load note version." });
+      return;
+    }
+
+    const finalCodes = Array.isArray(request.body.finalCodes)
+      ? request.body.finalCodes.map((item) => String(item || "").trim().toUpperCase()).filter(Boolean)
+      : null;
+    const overrideReason = String(request.body.overrideReason || "").trim();
+    const overrides = Array.isArray(request.body.overrides) ? request.body.overrides : [];
+    for (const item of overrides) {
+      const originalCode = String(item?.originalCode || "").trim().toUpperCase();
+      const finalCode = String(item?.finalCode || "").trim().toUpperCase();
+      const reason = String(item?.reason || overrideReason || "").trim();
+      if (!finalCode) continue;
+      addOverrideRecord({
+        appointmentId: appointment.id,
+        originalCode,
+        finalCode,
+        reason,
+        providerId: request.auth.userId,
+      });
+    }
+
+    const result = finalizeCurrentNote({
+      appointmentId: appointment.id,
+      actorId: request.auth.userId,
+      actorRole: request.auth.role,
+      overrideReason,
+      finalCodes,
+    });
+    if (!result) {
+      response.status(500).json({ error: "Unable to finalize note." });
+      return;
+    }
+
+    broadcastAppointmentEvent(appointment.id, "note.finalized", {
+      appointmentId: appointment.id,
+      noteId: appointment.noteWorkflow?.noteId,
+      finalizedAt: result.version?.finalizedAt || new Date().toISOString(),
+      versionId: result.version?.versionId,
+      actorId: request.auth.userId,
+      actorRole: request.auth.role,
+    });
+
+    fireAndForgetAudit("note.finalized", {
+      appointmentId: appointment.id,
+      noteId: appointment.noteWorkflow?.noteId,
+      versionId: result.version?.versionId,
+      actorId: request.auth.userId,
+      actorRole: request.auth.role,
+      finalCodes: result.version?.finalCodes || [],
+      overrideReason,
+      overrideCount: overrides.length,
+      delivery: result.delivery,
+    });
+
+    response.json(
+      buildNotePayload({
+        appointment,
+        version: result.version,
+        analysis: getCurrentNoteAnalysis(appointment.id),
+        includeVersions: true,
+      })
+    );
+  })
+);
+
+router.get(
+  "/appointments/:appointmentId/note/versions",
+  requireAuth({ roles: ["provider", "admin"] }),
+  withAsync(async (request, response) => {
+    const appointment = ensureAppointment(request.params.appointmentId, response);
+    if (!appointment) return;
+    const versions = listNoteVersions(appointment.id);
+    response.json({
+      appointmentId: appointment.id,
+      noteId: appointment.noteWorkflow?.noteId,
+      status: appointment.noteWorkflow?.status,
+      versions,
+    });
+  })
+);
+
+router.get(
+  "/billing/queue",
+  requireAuth({ roles: ["billing", "admin"] }),
+  withAsync(async (_request, response) => {
+    const queue = listAppointmentRecords()
+      .map((item) => getFinalizedNotePacket(item.id))
+      .filter(Boolean)
+      .map((packet) => ({
+        appointmentId: packet.appointmentId,
+        noteId: packet.noteId,
+        finalizedAt: packet.finalizedAt,
+        approvedCodes: packet.approvedCodes || [],
+        confidence: packet.codingAnalysis?.confidence || 0,
+      }));
+    response.json({ count: queue.length, queue });
+  })
+);
+
+router.get(
+  "/billing/appointments/:appointmentId/final",
+  requireAuth({ roles: ["billing", "admin"] }),
+  withAsync(async (request, response) => {
+    const packet = getFinalizedNotePacket(request.params.appointmentId);
+    if (!packet) {
+      response.status(404).json({ error: "No finalized note available for billing." });
+      return;
+    }
+    response.json(packet);
+  })
+);
+
+router.get(
   "/appointments/:appointmentId/transcript.pdf",
+  requireAuth({ roles: ["provider", "admin"] }),
   withAsync(async (request, response) => {
     const appointment = ensureAppointment(request.params.appointmentId, response);
     if (!appointment) return;
@@ -372,6 +832,7 @@ router.get(
 
 router.get(
   "/appointments/:appointmentId/audit",
+  requireAuth({ roles: ["provider", "admin"] }),
   withAsync(async (request, response) => {
     const appointment = ensureAppointment(request.params.appointmentId, response);
     if (!appointment) return;
@@ -392,6 +853,7 @@ router.get(
 
 router.get(
   "/reports/revenue",
+  requireAuth({ roles: ["provider", "admin"] }),
   withAsync(async (request, response) => {
     const granularity = String(request.query.granularity || "daily").trim().toLowerCase();
     const dateFrom = String(request.query.dateFrom || "").trim();
@@ -403,6 +865,7 @@ router.get(
 
 router.get(
   "/reports/revenue/export.csv",
+  requireAuth({ roles: ["provider", "admin"] }),
   withAsync(async (request, response) => {
     const granularity = String(request.query.granularity || "daily").trim().toLowerCase();
     const dateFrom = String(request.query.dateFrom || "").trim();
@@ -419,6 +882,7 @@ router.get(
 
 router.get(
   "/appointments/:appointmentId/stream",
+  requireAuth({ roles: ["provider", "admin"] }),
   withAsync(async (request, response) => {
     const appointment = ensureAppointment(request.params.appointmentId, response);
     if (!appointment) return;
@@ -449,6 +913,7 @@ router.get(
 
 router.get(
   "/azure/speech-token",
+  requireAuth({ roles: ["provider", "admin"] }),
   withAsync(async (_request, response) => {
     const token = await getAzureSpeechToken();
     response.json(token);
@@ -457,6 +922,7 @@ router.get(
 
 router.post(
   "/appointments/:appointmentId/transcript",
+  requireAuth({ roles: ["provider", "admin"] }),
   withAsync(async (request, response) => {
     const appointment = ensureAppointment(request.params.appointmentId, response);
     if (!appointment) return;
@@ -483,6 +949,7 @@ router.post(
 
 router.post(
   "/appointments/:appointmentId/transcript/aws-transcribe",
+  requireAuth({ roles: ["provider", "admin"] }),
   withAsync(async (request, response) => {
     const appointment = ensureAppointment(request.params.appointmentId, response);
     if (!appointment) return;
@@ -552,6 +1019,7 @@ router.post(
 
 router.post(
   "/appointments/:appointmentId/audio",
+  requireAuth({ roles: ["provider", "admin"] }),
   upload.single("audio"),
   withAsync(async (request, response) => {
     const appointment = ensureAppointment(request.params.appointmentId, response);
@@ -583,6 +1051,7 @@ router.post(
 
 router.get(
   "/codebook",
+  requireAuth({ roles: ["provider", "admin"] }),
   withAsync(async (_request, response) => {
     const snapshot = getCodebookSnapshot();
     response.json({
@@ -594,6 +1063,7 @@ router.get(
 
 router.put(
   "/codebook/codes/:code",
+  requireAuth({ roles: ["provider", "admin"] }),
   withAsync(async (request, response) => {
     const code = String(request.params.code || "").toUpperCase().trim();
     if (!code) {
@@ -628,6 +1098,7 @@ router.put(
 
 router.get(
   "/codes/search",
+  requireAuth({ roles: ["provider", "admin"] }),
   withAsync(async (request, response) => {
     const results = searchCodes(request.query.q || "");
     response.json({ results });
@@ -636,6 +1107,7 @@ router.get(
 
 router.get(
   "/settings/general",
+  requireAuth({ roles: ["provider", "admin"] }),
   withAsync(async (_request, response) => {
     const settings = getGeneralSettings();
     response.json({
@@ -651,6 +1123,7 @@ router.get(
 
 router.put(
   "/settings/general",
+  requireAuth({ roles: ["provider", "admin"] }),
   withAsync(async (request, response) => {
     const settings = updateGeneralSettings(request.body || {});
     fireAndForgetAudit("settings.general.updated", {
@@ -663,6 +1136,7 @@ router.put(
 
 router.get(
   "/preferences",
+  requireAuth({ roles: ["provider", "admin"] }),
   withAsync(async (request, response) => {
     const doctorRef = String(request.query.doctorRef || "default").trim() || "default";
     response.json({
@@ -674,6 +1148,7 @@ router.get(
 
 router.put(
   "/preferences",
+  requireAuth({ roles: ["provider", "admin"] }),
   withAsync(async (request, response) => {
     const doctorRef = String(request.body.doctorRef || request.query.doctorRef || "default").trim() || "default";
     const preferences = updateDoctorPreferences(doctorRef, request.body || {});
@@ -688,6 +1163,7 @@ router.put(
 
 router.get(
   "/codebook/extensions",
+  requireAuth({ roles: ["provider", "admin"] }),
   withAsync(async (_request, response) => {
     response.json({
       extensions: getCodebookExtensions(),
@@ -697,6 +1173,7 @@ router.get(
 
 router.put(
   "/codebook/extensions",
+  requireAuth({ roles: ["provider", "admin"] }),
   withAsync(async (request, response) => {
     const extensions = updateCodebookExtensions(request.body || {});
     fireAndForgetAudit("codebook.extensions.updated", {
@@ -709,6 +1186,7 @@ router.put(
 
 router.get(
   "/audit/events",
+  requireAuth({ roles: ["admin", "provider"] }),
   withAsync(async (request, response) => {
     const appointmentId = String(request.query.appointmentId || "").trim();
     const doctorRef = String(request.query.doctorRef || "").trim();
@@ -729,6 +1207,7 @@ router.get(
 
 router.get(
   "/hipaa/settings",
+  requireAuth({ roles: ["admin", "provider"] }),
   withAsync(async (_request, response) => {
     const hipaa = getHipaaSettings();
     const recentAudit = listAuditEvents({ limit: 100 });
@@ -750,6 +1229,7 @@ router.get(
 
 router.put(
   "/hipaa/settings",
+  requireAuth({ roles: ["admin", "provider"] }),
   withAsync(async (request, response) => {
     const hipaa = updateHipaaSettings(request.body || {});
     fireAndForgetAudit("hipaa.settings.updated", {
@@ -762,6 +1242,7 @@ router.put(
 
 router.post(
   "/hipaa/baa-documents",
+  requireAuth({ roles: ["admin", "provider"] }),
   upload.single("document"),
   withAsync(async (request, response) => {
     if (!request.file) {
@@ -806,6 +1287,7 @@ router.post(
 
 router.get(
   "/production/readiness",
+  requireAuth({ roles: ["admin", "provider"] }),
   withAsync(async (_request, response) => {
     const settings = getProductionReadinessSettings();
     const status = buildProductionReadinessStatus();
@@ -818,6 +1300,7 @@ router.get(
 
 router.put(
   "/production/readiness",
+  requireAuth({ roles: ["admin", "provider"] }),
   withAsync(async (request, response) => {
     const settings = updateProductionReadinessSettings(request.body || {});
     const status = buildProductionReadinessStatus();

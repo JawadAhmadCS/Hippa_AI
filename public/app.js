@@ -1,4 +1,9 @@
 const state = {
+  auth: {
+    token: "",
+    user: null,
+    challengeId: "",
+  },
   appointment: null,
   mediaRecorder: null,
   recordingChunks: [],
@@ -16,12 +21,24 @@ const state = {
   lastThrottleLogAt: 0,
   suggestionStream: null,
   currentView: "live",
+  allowedViews: ["live"],
   loadedViewData: {
     past: false,
+    billing: false,
     revenue: false,
     settings: false,
     hipaa: false,
     codebook: false,
+  },
+  noteEditor: {
+    loaded: false,
+    note: null,
+    codingAnalysis: null,
+    autosaveTimer: null,
+  },
+  billing: {
+    queue: [],
+    selectedAppointmentId: "",
   },
   selectedPastEncounterId: "",
   reportFilters: {
@@ -47,6 +64,19 @@ const state = {
 };
 
 const ui = {
+  authOverlay: document.getElementById("authOverlay"),
+  authUsername: document.getElementById("authUsername"),
+  authPassword: document.getElementById("authPassword"),
+  authPasswordBtn: document.getElementById("authPasswordBtn"),
+  auth2faBlock: document.getElementById("auth2faBlock"),
+  authTotpCode: document.getElementById("authTotpCode"),
+  auth2faBtn: document.getElementById("auth2faBtn"),
+  authSetupHint: document.getElementById("authSetupHint"),
+  authSetupSecret: document.getElementById("authSetupSecret"),
+  authErrorText: document.getElementById("authErrorText"),
+  authUserPill: document.getElementById("authUserPill"),
+  authUserText: document.getElementById("authUserText"),
+  logoutBtn: document.getElementById("logoutBtn"),
   doctorRef: document.getElementById("doctorRef"),
   patientRef: document.getElementById("patientRef"),
   consentFormId: document.getElementById("consentFormId"),
@@ -72,6 +102,25 @@ const ui = {
   billableCount: document.getElementById("billableCount"),
   cptBadge: document.getElementById("cptBadge"),
   txBadge: document.getElementById("txBadge"),
+  noteStatusBadge: document.getElementById("noteStatusBadge"),
+  noteAnalysisStatus: document.getElementById("noteAnalysisStatus"),
+  noteHpiEditor: document.getElementById("noteHpiEditor"),
+  noteRosEditor: document.getElementById("noteRosEditor"),
+  noteExamEditor: document.getElementById("noteExamEditor"),
+  noteAssessmentEditor: document.getElementById("noteAssessmentEditor"),
+  notePlanEditor: document.getElementById("notePlanEditor"),
+  noteAdditionalProvider: document.getElementById("noteAdditionalProvider"),
+  noteFreeText: document.getElementById("noteFreeText"),
+  recalculateNoteBtn: document.getElementById("recalculateNoteBtn"),
+  saveNoteDraftBtn: document.getElementById("saveNoteDraftBtn"),
+  finalizeNoteBtn: document.getElementById("finalizeNoteBtn"),
+  noteCptList: document.getElementById("noteCptList"),
+  noteIcdList: document.getElementById("noteIcdList"),
+  noteJustificationText: document.getElementById("noteJustificationText"),
+  noteMissingPrompts: document.getElementById("noteMissingPrompts"),
+  noteVersionList: document.getElementById("noteVersionList"),
+  noteFinalCodesInput: document.getElementById("noteFinalCodesInput"),
+  overrideReasonInput: document.getElementById("overrideReasonInput"),
   guidanceBadge: document.getElementById("guidanceBadge"),
   eventLog: document.getElementById("eventLog"),
   sessionBadge: document.getElementById("sessionBadge"),
@@ -88,6 +137,11 @@ const ui = {
   pastDateFrom: document.getElementById("pastDateFrom"),
   pastDateTo: document.getElementById("pastDateTo"),
   applyPastFiltersBtn: document.getElementById("applyPastFiltersBtn"),
+  billingQueueSummary: document.getElementById("billingQueueSummary"),
+  refreshBillingQueueBtn: document.getElementById("refreshBillingQueueBtn"),
+  billingQueueBody: document.getElementById("billingQueueBody"),
+  billingFinalNotePreview: document.getElementById("billingFinalNotePreview"),
+  billingApprovedCodes: document.getElementById("billingApprovedCodes"),
   pastAuditSummary: document.getElementById("pastAuditSummary"),
   pastEncounterAuditList: document.getElementById("pastEncounterAuditList"),
   reportGeneratedAt: document.getElementById("reportGeneratedAt"),
@@ -188,9 +242,11 @@ const ui = {
 
 const safeNumber = (value) => Number(value || 0).toFixed(2);
 const PREFS_KEY = "mari.preferences.v1";
+const AUTH_TOKEN_KEY = "mari.auth.token.v1";
 const viewTitles = {
   live: "Live Encounter",
   past: "Past Encounters",
+  billing: "Billing Queue",
   revenue: "Revenue Reports",
   settings: "Settings",
   codebook: "CPT Codebook",
@@ -235,6 +291,76 @@ const readPreferences = () => {
 
 const writePreferences = (prefs) => {
   localStorage.setItem(PREFS_KEY, JSON.stringify(prefs));
+};
+
+const readAuthToken = () => String(localStorage.getItem(AUTH_TOKEN_KEY) || "").trim();
+const writeAuthToken = (token) => {
+  const normalized = String(token || "").trim();
+  state.auth.token = normalized;
+  if (normalized) {
+    localStorage.setItem(AUTH_TOKEN_KEY, normalized);
+    return;
+  }
+  localStorage.removeItem(AUTH_TOKEN_KEY);
+};
+
+const clearAuthState = () => {
+  state.auth.user = null;
+  state.auth.challengeId = "";
+  writeAuthToken("");
+};
+
+const setAuthOverlayOpen = (open) => {
+  ui.authOverlay?.classList.toggle("open", Boolean(open));
+};
+
+const setAuthUserUi = () => {
+  const user = state.auth.user;
+  if (ui.authUserText) {
+    ui.authUserText.textContent = user
+      ? `${user.displayName || user.username} (${user.role})`
+      : "Not signed in";
+  }
+  if (ui.authUserPill) {
+    ui.authUserPill.classList.toggle("live", Boolean(user));
+  }
+  if (ui.logoutBtn) {
+    ui.logoutBtn.disabled = !user;
+  }
+};
+
+const setAuthError = (text) => {
+  if (!ui.authErrorText) return;
+  ui.authErrorText.textContent = String(text || "").trim();
+};
+
+const getRoleAllowedViews = (role) => {
+  if (role === "billing") return ["billing"];
+  if (role === "provider" || role === "admin") {
+    return ["live", "past", "billing", "revenue", "settings", "codebook", "preferences", "hipaa"];
+  }
+  return [];
+};
+
+const applyRoleViewAccess = () => {
+  const role = state.auth.user?.role || "";
+  const allowed = getRoleAllowedViews(role);
+  state.allowedViews = allowed;
+
+  for (const item of ui.navItems) {
+    const visible = allowed.includes(item.dataset.view);
+    item.style.display = visible ? "" : "none";
+  }
+
+  if (!allowed.includes(state.currentView)) {
+    state.currentView = allowed[0] || "live";
+  }
+};
+
+const resetLoadedViews = () => {
+  for (const key of Object.keys(state.loadedViewData)) {
+    state.loadedViewData[key] = false;
+  }
 };
 
 const escapeHtml = (value) =>
@@ -653,16 +779,255 @@ const renderBillableCodes = (codes) => {
   }
 };
 
+const getEditableText = (element) => String(element?.textContent || "").trim();
+
+const setEditableText = (element, value) => {
+  if (!element) return;
+  element.textContent = String(value || "").trim();
+};
+
+const getNoteContentFromUi = () => ({
+  sections: {
+    hpi: getEditableText(ui.noteHpiEditor),
+    ros: getEditableText(ui.noteRosEditor),
+    exam: getEditableText(ui.noteExamEditor),
+    assessment: getEditableText(ui.noteAssessmentEditor),
+    plan: getEditableText(ui.notePlanEditor),
+  },
+  additionalProviderNotes: String(ui.noteAdditionalProvider?.value || "").trim(),
+  freeTextAdditions: String(ui.noteFreeText?.value || "").trim(),
+});
+
+const setNoteContentToUi = (content = {}) => {
+  setEditableText(ui.noteHpiEditor, content?.sections?.hpi || "");
+  setEditableText(ui.noteRosEditor, content?.sections?.ros || "");
+  setEditableText(ui.noteExamEditor, content?.sections?.exam || "");
+  setEditableText(ui.noteAssessmentEditor, content?.sections?.assessment || "");
+  setEditableText(ui.notePlanEditor, content?.sections?.plan || "");
+  if (ui.noteAdditionalProvider) {
+    ui.noteAdditionalProvider.value = String(content?.additionalProviderNotes || "").trim();
+  }
+  if (ui.noteFreeText) {
+    ui.noteFreeText.value = String(content?.freeTextAdditions || "").trim();
+  }
+};
+
+const setNoteLockState = (locked) => {
+  const editable = [ui.noteHpiEditor, ui.noteRosEditor, ui.noteExamEditor, ui.noteAssessmentEditor, ui.notePlanEditor];
+  for (const item of editable) {
+    if (!item) continue;
+    item.setAttribute("contenteditable", locked ? "false" : "true");
+    item.style.background = locked ? "#f1f5f9" : "";
+  }
+  if (ui.noteAdditionalProvider) ui.noteAdditionalProvider.disabled = Boolean(locked);
+  if (ui.noteFreeText) ui.noteFreeText.disabled = Boolean(locked);
+  if (ui.saveNoteDraftBtn) ui.saveNoteDraftBtn.disabled = Boolean(locked);
+  if (ui.recalculateNoteBtn) ui.recalculateNoteBtn.disabled = Boolean(locked);
+  if (ui.finalizeNoteBtn) ui.finalizeNoteBtn.disabled = Boolean(locked);
+};
+
+const renderNoteVersions = (versions = []) => {
+  renderSimplePills(
+    ui.noteVersionList,
+    versions.map((item) => `v${item.versionNumber} ${item.versionType}${item.isFinal ? " (final)" : ""}`),
+    "No versions yet"
+  );
+};
+
+const renderNoteCoding = (analysis) => {
+  state.noteEditor.codingAnalysis = analysis || null;
+  if (!analysis) {
+    renderSimplePills(ui.noteCptList, [], "No CPT suggestions");
+    renderSimplePills(ui.noteIcdList, [], "No ICD suggestions");
+    renderSimplePills(ui.noteMissingPrompts, [], "No prompts");
+    if (ui.noteJustificationText) ui.noteJustificationText.textContent = "No current coding justification.";
+    return;
+  }
+
+  const cptCodes = Array.isArray(analysis.cptCodes) ? analysis.cptCodes : [];
+  const icdCodes = Array.isArray(analysis.icdCodes) ? analysis.icdCodes : [];
+  const prompts = Array.isArray(analysis.documentationImprovements)
+    ? analysis.documentationImprovements
+    : [];
+
+  renderSimplePills(
+    ui.noteCptList,
+    cptCodes.map(
+      (item) =>
+        `${item.code} (${Math.round((item.confidence || 0) * 100)}%) • refs ${
+          Array.isArray(item.evidenceRefs) ? item.evidenceRefs.length : 0
+        }`
+    ),
+    "No CPT suggestions"
+  );
+  renderSimplePills(
+    ui.noteIcdList,
+    icdCodes.map(
+      (item) =>
+        `${item.code} (${Math.round((item.confidence || 0) * 100)}%) • refs ${
+          Array.isArray(item.evidenceRefs) ? item.evidenceRefs.length : 0
+        }`
+    ),
+    "No ICD suggestions"
+  );
+  renderSimplePills(
+    ui.noteMissingPrompts,
+    prompts.map((item) => item.text || item.prompt),
+    "No prompts"
+  );
+  if (ui.noteJustificationText) {
+    ui.noteJustificationText.textContent = String(analysis.justification || "No justification");
+  }
+};
+
+const renderNotePayload = (payload) => {
+  const note = payload?.note || null;
+  state.noteEditor.note = note;
+  if (!note) return;
+
+  setNoteContentToUi(note.version?.contentJson || {});
+  renderNoteVersions(note.versions || []);
+  renderNoteCoding(payload.codingAnalysis || null);
+  const finalized = note.status === "finalized" && note.locked;
+  setNoteLockState(finalized);
+
+  if (ui.noteStatusBadge) {
+    ui.noteStatusBadge.textContent = finalized ? "Finalized" : note.status || "Draft";
+    ui.noteStatusBadge.classList.toggle("active", finalized);
+  }
+
+  if (ui.noteAnalysisStatus) {
+    const model = payload?.codingAnalysis?.model;
+    const confidence = Math.round(Number(payload?.codingAnalysis?.confidence || 0) * 100);
+    ui.noteAnalysisStatus.textContent = model
+      ? `Analysis ready (${model}) • ${confidence}%`
+      : `Analysis ready • ${confidence}%`;
+  }
+  const finalCodes =
+    note?.version?.finalCodes ||
+    payload?.codingAnalysis?.cptCodes?.map((item) => item.code).filter(Boolean) ||
+    [];
+  if (ui.noteFinalCodesInput && !ui.noteFinalCodesInput.value.trim()) {
+    ui.noteFinalCodesInput.value = finalCodes.join(", ");
+  }
+};
+
+const loadAppointmentNote = async (appointmentId, { includeVersions = true } = {}) => {
+  if (!appointmentId) return;
+  const payload = await api(
+    `/api/appointments/${encodeURIComponent(appointmentId)}/note?includeVersions=${includeVersions ? "true" : "false"}`
+  );
+  renderNotePayload(payload || {});
+  state.noteEditor.loaded = true;
+};
+
+const saveNoteDraft = async ({ silent = false, allowAfterFinal = false } = {}) => {
+  if (!state.appointment?.id) return null;
+  if (ui.noteAnalysisStatus) ui.noteAnalysisStatus.textContent = "Saving draft + updating coding...";
+
+  const payload = await api(`/api/appointments/${encodeURIComponent(state.appointment.id)}/note`, {
+    method: "PUT",
+    body: JSON.stringify({
+      content: getNoteContentFromUi(),
+      allowAfterFinal,
+    }),
+  });
+  renderNotePayload(payload || {});
+  if (!silent) addLog("Provider note draft saved.", "good");
+  return payload;
+};
+
+const recalculateNoteDraft = async () => {
+  if (!state.appointment?.id) return;
+  if (ui.noteAnalysisStatus) ui.noteAnalysisStatus.textContent = "Recalculating...";
+  const payload = await api(
+    `/api/appointments/${encodeURIComponent(state.appointment.id)}/note/recalculate`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        content: getNoteContentFromUi(),
+      }),
+    }
+  );
+  renderNoteCoding(payload.codingAnalysis || null);
+  if (ui.noteAnalysisStatus) ui.noteAnalysisStatus.textContent = "Analysis ready";
+  addLog("Coding recommendations recalculated from edited note.", "good");
+};
+
+const finalizeCurrentNote = async () => {
+  if (!state.appointment?.id) return;
+  const overriddenCodes = String(ui.noteFinalCodesInput?.value || "")
+    .split(",")
+    .map((item) => item.trim().toUpperCase())
+    .filter(Boolean);
+  const finalCodes = overriddenCodes.length
+    ? overriddenCodes
+    : Array.isArray(state.noteEditor.codingAnalysis?.cptCodes)
+      ? state.noteEditor.codingAnalysis.cptCodes.map((item) => item.code).filter(Boolean)
+      : [];
+  const suggestedCodes = Array.isArray(state.noteEditor.codingAnalysis?.cptCodes)
+    ? state.noteEditor.codingAnalysis.cptCodes.map((item) => String(item.code || "").toUpperCase()).filter(Boolean)
+    : [];
+  const overrideReason = String(ui.overrideReasonInput?.value || "").trim();
+  const overrides = [];
+  for (const code of finalCodes) {
+    if (!suggestedCodes.includes(code)) {
+      overrides.push({
+        originalCode: suggestedCodes[0] || "",
+        finalCode: code,
+        reason: overrideReason,
+      });
+    }
+  }
+
+  const payload = await api(`/api/appointments/${encodeURIComponent(state.appointment.id)}/note/finalize`, {
+    method: "POST",
+    body: JSON.stringify({
+      overrideReason,
+      finalCodes,
+      overrides,
+    }),
+  });
+  renderNotePayload(payload || {});
+  addLog("Note finalized and locked for billing.", "good");
+};
+
+const scheduleNoteAutosave = () => {
+  if (!state.appointment?.id) return;
+  if (state.noteEditor.note?.locked) return;
+  clearTimeout(state.noteEditor.autosaveTimer);
+  if (ui.noteAnalysisStatus) ui.noteAnalysisStatus.textContent = "Draft changes pending...";
+  state.noteEditor.autosaveTimer = setTimeout(() => {
+    saveNoteDraft({ silent: true }).catch((error) =>
+      addLog(`Auto-save failed: ${error.message}`, "warn")
+    );
+  }, 1200);
+};
+
 const api = async (path, options = {}) => {
+  const headers = {
+    ...(options.headers || {}),
+  };
+  if (!headers["Content-Type"] && !(options.body instanceof FormData)) {
+    headers["Content-Type"] = "application/json";
+  }
+  if (state.auth.token) {
+    headers.Authorization = `Bearer ${state.auth.token}`;
+  }
+
   const response = await fetch(path, {
-    headers: {
-      "Content-Type": "application/json",
-      ...(options.headers || {}),
-    },
+    headers,
     ...options,
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
+    if (response.status === 401 && state.auth.token) {
+      clearAuthState();
+      setAuthUserUi();
+      applyRoleViewAccess();
+      setAuthOverlayOpen(true);
+      setAuthError("Session expired. Please sign in again.");
+    }
     throw new Error(data.error || `Request failed: ${response.status}`);
   }
   return data;
@@ -719,6 +1084,10 @@ const readPreferencesFromUi = () => ({
 const renderPastEncounters = (appointments) => {
   if (!ui.pastEncountersBody) return;
 
+  const accessSuffix = state.auth.token
+    ? `?accessToken=${encodeURIComponent(state.auth.token)}`
+    : "";
+
   const rowsHtml = (appointments || [])
     .map(
       (item) => `
@@ -742,7 +1111,7 @@ const renderPastEncounters = (appointments) => {
           <div class="inline-actions">
             <a class="btn btn-ghost" style="height:30px;padding:0 10px;" href="/api/appointments/${encodeURIComponent(
               item.id
-            )}/transcript.pdf" target="_blank" rel="noopener">PDF</a>
+            )}/transcript.pdf${accessSuffix}" target="_blank" rel="noopener">PDF</a>
             <button class="btn btn-ghost" style="height:30px;padding:0 10px;" data-audit-id="${escapeHtml(
               item.id
             )}" type="button">Audit</button>
@@ -769,6 +1138,67 @@ const renderPastEncounters = (appointments) => {
     const count = Array.isArray(appointments) ? appointments.length : 0;
     ui.pastEncountersSummary.textContent = `${count} encounter${count === 1 ? "" : "s"}`;
   }
+};
+
+const renderBillingQueue = (queue = []) => {
+  state.billing.queue = Array.isArray(queue) ? queue : [];
+  if (!ui.billingQueueBody) return;
+
+  const rowsHtml = state.billing.queue
+    .map(
+      (item) => `
+      <tr>
+        <td><div class="table-code-pill">${escapeHtml(item.appointmentId || "-")}</div></td>
+        <td>${escapeHtml(formatDateTime(item.finalizedAt))}</td>
+        <td>${escapeHtml((item.approvedCodes || []).join(", ") || "-")}</td>
+        <td>${escapeHtml(`${Math.round(Number(item.confidence || 0) * 100)}%`)}</td>
+        <td><button class="btn btn-ghost" type="button" data-billing-open="${escapeHtml(
+          item.appointmentId
+        )}" style="height:30px;padding:0 10px;">Open</button></td>
+      </tr>`
+    )
+    .join("");
+
+  renderTableBody(ui.billingQueueBody, rowsHtml, 5, "No finalized notes available.");
+  if (ui.billingQueueSummary) {
+    ui.billingQueueSummary.textContent = `${state.billing.queue.length} finalized encounter${
+      state.billing.queue.length === 1 ? "" : "s"
+    }`;
+  }
+
+  ui.billingQueueBody.querySelectorAll("button[data-billing-open]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const appointmentId = button.getAttribute("data-billing-open");
+      if (!appointmentId) return;
+      loadBillingFinalNote(appointmentId).catch((error) =>
+        addLog(`Billing final note load failed: ${error.message}`, "warn")
+      );
+    });
+  });
+};
+
+const loadBillingQueue = async () => {
+  const payload = await api("/api/billing/queue");
+  renderBillingQueue(payload.queue || []);
+  state.loadedViewData.billing = true;
+};
+
+const loadBillingFinalNote = async (appointmentId) => {
+  const payload = await api(`/api/billing/appointments/${encodeURIComponent(appointmentId)}/final`);
+  const sections = payload?.finalVersion?.contentJson?.sections || {};
+  const preview = [
+    `HPI: ${sections.hpi || "-"}`,
+    `ROS: ${sections.ros || "-"}`,
+    `Exam: ${sections.exam || "-"}`,
+    `Assessment: ${sections.assessment || "-"}`,
+    `Plan: ${sections.plan || "-"}`,
+  ].join("\n\n");
+
+  if (ui.billingFinalNotePreview) {
+    ui.billingFinalNotePreview.textContent = preview;
+  }
+  renderSimplePills(ui.billingApprovedCodes, payload.approvedCodes || [], "No approved codes.");
+  state.billing.selectedAppointmentId = appointmentId;
 };
 
 const renderAuditItems = (container, events, fallbackText) => {
@@ -947,7 +1377,8 @@ const loadRevenueReport = async () => {
 
 const exportRevenueCsv = () => {
   const query = buildRevenueQueryString();
-  window.open(`/api/reports/revenue/export.csv?${query}`, "_blank", "noopener,noreferrer");
+  const tokenPart = state.auth.token ? `&accessToken=${encodeURIComponent(state.auth.token)}` : "";
+  window.open(`/api/reports/revenue/export.csv?${query}${tokenPart}`, "_blank", "noopener,noreferrer");
 };
 
 const populateGeneralSettingsForm = (settings) => {
@@ -1210,6 +1641,11 @@ const uploadBaaDocument = async () => {
 
   const response = await fetch("/api/hipaa/baa-documents", {
     method: "POST",
+    headers: state.auth.token
+      ? {
+          Authorization: `Bearer ${state.auth.token}`,
+        }
+      : undefined,
     body: form,
   });
   const payload = await response.json().catch(() => ({}));
@@ -1489,7 +1925,13 @@ const addBundlingRule = async () => {
 };
 
 const setActiveView = async (view, { forceReload = false } = {}) => {
+  if (!state.auth.user) return;
   if (!viewTitles[view]) return;
+  if (Array.isArray(state.allowedViews) && state.allowedViews.length) {
+    if (!state.allowedViews.includes(view)) {
+      view = state.allowedViews[0] || "live";
+    }
+  }
 
   state.currentView = view;
   if (ui.currentViewLabel) {
@@ -1506,6 +1948,9 @@ const setActiveView = async (view, { forceReload = false } = {}) => {
 
   if (view === "past" && (forceReload || !state.loadedViewData.past)) {
     await loadPastEncounters();
+  }
+  if (view === "billing" && (forceReload || !state.loadedViewData.billing)) {
+    await loadBillingQueue();
   }
   if (view === "revenue") {
     const prefs = readPreferences();
@@ -1632,7 +2077,8 @@ const startSuggestionStream = () => {
   if (!state.appointment) return;
   closeSuggestionStream();
 
-  const stream = new EventSource(`/api/appointments/${state.appointment.id}/stream`);
+  const suffix = state.auth.token ? `?accessToken=${encodeURIComponent(state.auth.token)}` : "";
+  const stream = new EventSource(`/api/appointments/${state.appointment.id}/stream${suffix}`);
   stream.addEventListener("analysis.update", (event) => {
     const payload = JSON.parse(event.data || "{}");
     applyAnalysisPayload(payload);
@@ -1836,6 +2282,11 @@ const stopRecordingAndUpload = async () => {
   form.append("audio", blob, `${state.appointment.id}.webm`);
   const response = await fetch(`/api/appointments/${state.appointment.id}/audio`, {
     method: "POST",
+    headers: state.auth.token
+      ? {
+          Authorization: `Bearer ${state.auth.token}`,
+        }
+      : undefined,
     body: form,
   });
 
@@ -1865,9 +2316,20 @@ const resetEncounterPanels = () => {
 
   if (ui.cptBadge) ui.cptBadge.textContent = "0 codes";
   if (ui.billableCount) ui.billableCount.textContent = "0 items";
+  setNoteContentToUi({
+    sections: { hpi: "", ros: "", exam: "", assessment: "", plan: "" },
+    additionalProviderNotes: "",
+    freeTextAdditions: "",
+  });
+  renderNoteCoding(null);
+  renderNoteVersions([]);
 };
 
 const startEncounter = async () => {
+  if (!["provider", "admin"].includes(state.auth.user?.role || "")) {
+    addLog("Only provider/admin users can start encounters.", "warn");
+    return;
+  }
   if (!ui.consentGiven.checked) {
     alert("Intake consent form must be signed before recording.");
     return;
@@ -1907,6 +2369,9 @@ const startEncounter = async () => {
   state.lastServerTranscriptCount = 0;
   state.lastAssistantMessage = "";
   state.lastThrottleLogAt = 0;
+  state.noteEditor.loaded = false;
+  state.noteEditor.note = null;
+  state.noteEditor.codingAnalysis = null;
   clearInterimTranscript();
 
   resetEncounterPanels();
@@ -1925,6 +2390,9 @@ const startEncounter = async () => {
     text: ui.sessionBadge ? `Live: ${state.appointment.id}` : "Session Live",
   });
   startSuggestionStream();
+  loadAppointmentNote(state.appointment.id).catch((error) =>
+    addLog(`Unable to load note draft: ${error.message}`, "warn")
+  );
 
   state.micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
   const azureStarted = await startAzureSpeech();
@@ -2013,6 +2481,9 @@ const bindNavigation = () => {
 
   ui.refreshRevenueBtn?.addEventListener("click", () => {
     loadRevenueReport().catch((error) => addLog(`Revenue report refresh failed: ${error.message}`, "warn"));
+  });
+  ui.refreshBillingQueueBtn?.addEventListener("click", () => {
+    loadBillingQueue().catch((error) => addLog(`Billing queue refresh failed: ${error.message}`, "warn"));
   });
   ui.applyReportFiltersBtn?.addEventListener("click", () => {
     loadRevenueReport().catch((error) => addLog(`Revenue report filter failed: ${error.message}`, "warn"));
@@ -2132,11 +2603,158 @@ const bindCodebook = () => {
   });
 };
 
+const handlePasswordAuth = async () => {
+  const username = String(ui.authUsername?.value || "").trim().toLowerCase();
+  const password = String(ui.authPassword?.value || "");
+  if (!username || !password) {
+    setAuthError("Username and password are required.");
+    return;
+  }
+
+  const payload = await api("/api/auth/login", {
+    method: "POST",
+    body: JSON.stringify({ username, password }),
+  });
+
+  state.auth.challengeId = payload.challengeId || "";
+  if (!state.auth.challengeId) {
+    throw new Error("Missing 2FA challenge from server.");
+  }
+
+  if (ui.auth2faBlock) ui.auth2faBlock.style.display = "block";
+  if (ui.authSetupHint) {
+    ui.authSetupHint.textContent = payload.mfaSetupRequired
+      ? "Scan this secret in your authenticator app, then enter the 6-digit code."
+      : "Enter your 6-digit authenticator code.";
+  }
+  if (ui.authSetupSecret) {
+    ui.authSetupSecret.textContent = payload.setup?.secret
+      ? `Setup secret: ${payload.setup.secret}`
+      : "";
+  }
+  setAuthError("");
+};
+
+const handle2faAuth = async () => {
+  const code = String(ui.authTotpCode?.value || "").trim();
+  if (!state.auth.challengeId || !code) {
+    setAuthError("Enter the 2FA code to continue.");
+    return;
+  }
+
+  const payload = await api("/api/auth/2fa/verify", {
+    method: "POST",
+    body: JSON.stringify({
+      challengeId: state.auth.challengeId,
+      code,
+    }),
+  });
+
+  writeAuthToken(payload.token || "");
+  state.auth.user = payload.user || null;
+  state.auth.challengeId = "";
+  if (ui.authPassword) ui.authPassword.value = "";
+  if (ui.authTotpCode) ui.authTotpCode.value = "";
+  if (ui.auth2faBlock) ui.auth2faBlock.style.display = "none";
+  if (ui.authSetupSecret) ui.authSetupSecret.textContent = "";
+  setAuthOverlayOpen(false);
+  setAuthUserUi();
+  applyRoleViewAccess();
+  resetLoadedViews();
+  initializeViews();
+  setAuthError("");
+};
+
+const loadSessionUser = async () => {
+  const token = readAuthToken();
+  if (!token) return false;
+  writeAuthToken(token);
+  try {
+    const payload = await api("/api/auth/me");
+    state.auth.user = payload.user || null;
+    setAuthUserUi();
+    applyRoleViewAccess();
+    return Boolean(state.auth.user);
+  } catch {
+    clearAuthState();
+    resetLoadedViews();
+    setAuthUserUi();
+    return false;
+  }
+};
+
+const logout = async () => {
+  try {
+    await api("/api/auth/logout", { method: "POST", body: JSON.stringify({}) });
+  } catch {}
+  clearAuthState();
+  resetLoadedViews();
+  setAuthUserUi();
+  applyRoleViewAccess();
+  setAuthOverlayOpen(true);
+  setAuthError("Signed out. Please login again.");
+};
+
+const bindNoteEditor = () => {
+  ui.recalculateNoteBtn?.addEventListener("click", () => {
+    recalculateNoteDraft().catch((error) =>
+      addLog(`Recalculate failed: ${error.message}`, "warn")
+    );
+  });
+
+  ui.saveNoteDraftBtn?.addEventListener("click", () => {
+    saveNoteDraft().catch((error) => addLog(`Save draft failed: ${error.message}`, "warn"));
+  });
+
+  ui.finalizeNoteBtn?.addEventListener("click", () => {
+    saveNoteDraft({ silent: true })
+      .then(() => finalizeCurrentNote())
+      .catch((error) => {
+        if (String(error.message || "").includes("Re-authentication required")) {
+          setAuthOverlayOpen(true);
+          setAuthError("Re-authenticate with 2FA to finalize note.");
+        } else {
+          addLog(`Finalize failed: ${error.message}`, "warn");
+        }
+      });
+  });
+
+  const autosaveInputs = [
+    ui.noteHpiEditor,
+    ui.noteRosEditor,
+    ui.noteExamEditor,
+    ui.noteAssessmentEditor,
+    ui.notePlanEditor,
+    ui.noteAdditionalProvider,
+    ui.noteFreeText,
+  ];
+
+  for (const input of autosaveInputs) {
+    if (!input) continue;
+    input.addEventListener("input", scheduleNoteAutosave);
+    input.addEventListener("blur", () => {
+      if (!state.appointment?.id) return;
+      saveNoteDraft({ silent: true }).catch((error) =>
+        addLog(`Auto-save failed: ${error.message}`, "warn")
+      );
+    });
+  }
+};
+
 const initializeViews = () => {
+  const role = state.auth.user?.role || "";
   const prefs = readPreferences();
   applyPreferencesToUi(prefs);
 
   if (ui.reportGranularity) ui.reportGranularity.value = state.reportFilters.granularity;
+
+  if (role === "billing") {
+    setActiveView("billing", { forceReload: true }).catch((error) =>
+      addLog(`Unable to initialize billing view: ${error.message}`, "warn")
+    );
+    return;
+  }
+
   if (ui.prefDoctorRef && !ui.prefDoctorRef.value.trim()) {
     ui.prefDoctorRef.value = prefs.doctorRef || "default";
   }
@@ -2154,7 +2772,10 @@ const initializeViews = () => {
     })
     .catch(() => {});
 
-  const initialView = viewTitles[prefs.defaultView] ? prefs.defaultView : "live";
+  const preferred = viewTitles[prefs.defaultView] ? prefs.defaultView : "live";
+  const initialView = state.allowedViews.includes(preferred)
+    ? preferred
+    : state.allowedViews[0] || "live";
   setActiveView(initialView).catch((error) =>
     addLog(`Unable to initialize default view: ${error.message}`, "warn")
   );
@@ -2177,10 +2798,45 @@ document.addEventListener("keydown", (event) => {
 });
 
 ui.consentGiven?.addEventListener("change", setConsentBadgeState);
+ui.authPasswordBtn?.addEventListener("click", () => {
+  handlePasswordAuth().catch((error) => setAuthError(error.message || "Login failed."));
+});
+ui.auth2faBtn?.addEventListener("click", () => {
+  handle2faAuth().catch((error) => setAuthError(error.message || "2FA failed."));
+});
+ui.logoutBtn?.addEventListener("click", () => {
+  logout().catch((error) => addLog(`Logout failed: ${error.message}`, "warn"));
+});
+ui.authPassword?.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter") return;
+  event.preventDefault();
+  handlePasswordAuth().catch((error) => setAuthError(error.message || "Login failed."));
+});
+ui.authTotpCode?.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter") return;
+  event.preventDefault();
+  handle2faAuth().catch((error) => setAuthError(error.message || "2FA failed."));
+});
 
 setConsentBadgeState();
 setTranscriptBadge("Idle", false);
 bindNavigation();
 bindPreferences();
 bindCodebook();
-initializeViews();
+bindNoteEditor();
+setAuthUserUi();
+applyRoleViewAccess();
+setAuthOverlayOpen(true);
+
+loadSessionUser()
+  .then((signedIn) => {
+    if (!signedIn) {
+      setAuthOverlayOpen(true);
+      return;
+    }
+    setAuthOverlayOpen(false);
+    initializeViews();
+  })
+  .catch(() => {
+    setAuthOverlayOpen(true);
+  });
