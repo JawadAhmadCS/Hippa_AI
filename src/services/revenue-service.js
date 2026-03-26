@@ -12,6 +12,7 @@ const toBillableEntry = ({
   evidence,
   evidenceRefs = [],
   rationale = "",
+  mdmJustification = "",
 }) => ({
   code: cpt.code,
   title: cpt.title,
@@ -20,6 +21,7 @@ const toBillableEntry = ({
   confidence: Number(confidence || 0),
   evidence: String(evidence || "").slice(0, 220),
   rationale: String(rationale || "").trim(),
+  mdmJustification: String(mdmJustification || "").trim(),
   evidenceRefs: Array.isArray(evidenceRefs) ? evidenceRefs : [],
   estimatedAmount: roundCurrency(cpt.medicareRate * payerMultiplier),
 });
@@ -39,6 +41,8 @@ export const estimateRevenueTracker = ({ insurancePlan, baselineCode = "99213", 
         confidence: 1,
         evidence: "Baseline established patient follow-up visit.",
         rationale: "Default baseline established visit before supported upgrades are identified.",
+        mdmJustification:
+          "Current coded baseline based on established follow-up complexity; upgrade requires stronger MDM support.",
       })
     : null;
 
@@ -62,6 +66,7 @@ export const estimateRevenueTracker = ({ insurancePlan, baselineCode = "99213", 
         evidence: suggestion.evidence,
         evidenceRefs: suggestion.evidenceRefs,
         rationale: suggestion.rationale,
+        mdmJustification: suggestion.mdmJustification,
       });
 
       if (!selectedEm || candidate.estimatedAmount > selectedEm.estimatedAmount) {
@@ -82,6 +87,7 @@ export const estimateRevenueTracker = ({ insurancePlan, baselineCode = "99213", 
           evidence: suggestion.evidence,
           evidenceRefs: suggestion.evidenceRefs,
           rationale: suggestion.rationale,
+          mdmJustification: suggestion.mdmJustification,
         })
       );
     }
@@ -93,13 +99,18 @@ export const estimateRevenueTracker = ({ insurancePlan, baselineCode = "99213", 
 
   const earnedNow = billableCodes.reduce((total, item) => total + Number(item.estimatedAmount || 0), 0);
   const builtFromDetected = Math.max(0, earnedNow - baselineRevenue);
+  const currentCodesRevenue = roundCurrency(baselineRevenue);
+  const suggestedCodesRevenue = roundCurrency(builtFromDetected);
 
   return {
     baseline: roundCurrency(baselineRevenue),
     builtFromDetected: roundCurrency(builtFromDetected),
     compliantOpportunity: roundCurrency(builtFromDetected),
+    currentCodesRevenue,
+    suggestedCodesRevenue,
     earnedNow: roundCurrency(earnedNow),
     projectedTotal: roundCurrency(earnedNow),
+    projectedRevenueWithSuggestions: roundCurrency(earnedNow),
     payerMultiplier: roundCurrency(payerMultiplier),
     baselineCode,
     billableCodes,

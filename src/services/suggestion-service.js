@@ -7,36 +7,42 @@ const RULES = [
     code: "99406",
     keywords: ["smoking", "tobacco", "cessation"],
     rationale: "Counseling for tobacco cessation documented in conversation.",
+    specialties: ["family medicine", "internal medicine", "pulmonology", "cardiology"],
   },
   {
     id: "depression-screening",
     code: "G0444",
     keywords: ["depression", "phq", "screening"],
     rationale: "Depression screening discussed; document validated tool and score.",
+    specialties: ["family medicine", "internal medicine", "psychiatry", "pediatrics"],
   },
   {
     id: "awv-subsequent",
     code: "G0439",
     keywords: ["annual wellness", "preventive", "medicare wellness"],
     rationale: "Elements of Medicare annual wellness visit appear present.",
+    specialties: ["family medicine", "internal medicine", "geriatrics"],
   },
   {
     id: "advance-care-planning",
     code: "99497",
     keywords: ["advance directive", "goals of care", "care planning"],
     rationale: "Advance care planning conversation appears to be present.",
+    specialties: ["family medicine", "internal medicine", "geriatrics", "oncology"],
   },
   {
     id: "chronic-care-management",
     code: "99490",
     keywords: ["chronic care", "care coordination", "20 minutes"],
     rationale: "Chronic care management criteria may be met if monthly requirements are documented.",
+    specialties: ["family medicine", "internal medicine", "cardiology", "endocrinology"],
   },
   {
     id: "ecg-routine",
     code: "93000",
     keywords: ["ecg", "ekg", "electrocardiogram"],
     rationale: "ECG discussion indicates potential billable diagnostic tracing.",
+    specialties: ["cardiology", "internal medicine", "family medicine", "emergency medicine"],
   },
   {
     id: "moderate-mdm-medication-management",
@@ -44,6 +50,7 @@ const RULES = [
     keywords: ["blood pressure", "medication", "adjust", "hypertension"],
     rationale: "Medication management with chronic condition follow-up suggests moderate MDM.",
     minHits: 3,
+    specialties: ["family medicine", "internal medicine", "cardiology"],
   },
 ];
 
@@ -52,6 +59,25 @@ const clampPriority = (value) => {
   const normalized = String(value || "").toLowerCase();
   if (normalized === "high" || normalized === "medium" || normalized === "low") return normalized;
   return "medium";
+};
+
+const normalizeSpecialtyKey = (value) => String(value || "").trim().toLowerCase();
+
+const buildMdmJustification = ({ code, rationale = "", evidence = "", documentationNeeded = "" }) => {
+  const normalizedCode = String(code || "").toUpperCase().trim();
+  const combined = [rationale, evidence, documentationNeeded].map((item) => String(item || "").toLowerCase()).join(" ");
+
+  if (/^9921[3-5]$/.test(normalizedCode)) {
+    if (combined.includes("medication") || combined.includes("risk") || combined.includes("chronic")) {
+      return "MDM supports E/M selection through chronic condition assessment, treatment risk, and active management complexity.";
+    }
+    if (combined.includes("data") || combined.includes("review")) {
+      return "MDM supports E/M selection through documented data review, assessment complexity, and care planning decisions.";
+    }
+    return "MDM support required: document problems addressed, data reviewed, and risk of management for this E/M level.";
+  }
+
+  return "MDM context supports medical necessity when linked to assessed problems, documented decision-making, and plan details.";
 };
 
 const makeSuggestion = (code, rationale, evidenceText, baseConfidence = 0.64) => {
@@ -64,6 +90,12 @@ const makeSuggestion = (code, rationale, evidenceText, baseConfidence = 0.64) =>
     evidence: evidenceText.slice(0, 240),
     documentationNeeded: cpt.documentationNeeded,
     complianceNotes: cpt.complianceNotes,
+    mdmJustification: buildMdmJustification({
+      code: cpt.code,
+      rationale,
+      evidence: evidenceText,
+      documentationNeeded: cpt.documentationNeeded,
+    }),
     confidence: clampConfidence(baseConfidence),
   };
 };
@@ -101,11 +133,18 @@ const ICD_RULES = [
   },
 ];
 
-export const inferRuleBasedSuggestions = ({ segment, existingCodes }) => {
+export const inferRuleBasedSuggestions = ({ segment, existingCodes, doctorSpecialties = [] }) => {
   const text = String(segment || "").toLowerCase();
   if (!text) return [];
+  const specialtySet = new Set((doctorSpecialties || []).map((item) => normalizeSpecialtyKey(item)));
 
   return RULES.filter((rule) => {
+    if (Array.isArray(rule.specialties) && rule.specialties.length) {
+      const supported = rule.specialties.some((specialty) =>
+        specialtySet.has(normalizeSpecialtyKey(specialty))
+      );
+      if (!supported && specialtySet.size > 0) return false;
+    }
     const hits = rule.keywords.filter((keyword) => text.includes(keyword)).length;
     const threshold = Number(rule.minHits) || 2;
     return hits >= threshold;
@@ -155,6 +194,12 @@ export const normalizeAiSuggestions = (items) => {
         evidence: String(item?.evidence || ""),
         documentationNeeded: String(item?.documentationNeeded || cpt.documentationNeeded),
         complianceNotes: cpt.complianceNotes,
+        mdmJustification: String(item?.mdmJustification || "").trim() || buildMdmJustification({
+          code: cpt.code,
+          rationale: item?.rationale,
+          evidence: item?.evidence,
+          documentationNeeded: item?.documentationNeeded || cpt.documentationNeeded,
+        }),
         confidence: clampConfidence(item?.confidence ?? 0.55),
       };
     })

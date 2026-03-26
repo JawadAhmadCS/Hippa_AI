@@ -39,6 +39,7 @@ app.use(
       { method: "GET", path: "/health" },
       { method: "GET", path: "/compliance/status" },
       { method: "POST", path: "/auth/login" },
+      { method: "POST", path: "/auth/2fa/sms/send" },
       { method: "POST", path: "/auth/2fa/verify" },
     ],
   }),

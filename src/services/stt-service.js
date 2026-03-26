@@ -4,6 +4,12 @@ const normalizeText = (value) =>
     .trim();
 
 const asArray = (value) => (Array.isArray(value) ? value : []);
+const normalizeProvider = (value) =>
+  String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, "")
+    .slice(0, 40);
 
 const extractAwsResults = (payload) => {
   if (!payload || typeof payload !== "object") return [];
@@ -57,3 +63,46 @@ export const normalizeIncomingTranscript = (body) => {
   };
 };
 
+export const parseTelehealthTranscriptPayload = (payload = {}) => {
+  const providerId =
+    normalizeProvider(payload?.provider || payload?.platform || payload?.vendor || "telehealth") ||
+    "telehealth";
+
+  const candidateSegments = asArray(
+    payload?.segments ||
+      payload?.transcriptSegments ||
+      payload?.lines ||
+      payload?.results ||
+      payload?.items
+  );
+
+  const segments = candidateSegments
+    .map((item) => {
+      if (typeof item === "string") {
+        return {
+          text: normalizeText(item),
+          isPartial: false,
+          speaker: "",
+          startTime: 0,
+          endTime: 0,
+        };
+      }
+      const text = normalizeText(
+        item?.text || item?.transcript || item?.content || item?.utterance || item?.message || ""
+      );
+      return {
+        text,
+        isPartial: Boolean(item?.isPartial || item?.partial),
+        speaker: normalizeText(item?.speaker || item?.participant || item?.role || ""),
+        startTime: Number(item?.startTime || item?.start || 0),
+        endTime: Number(item?.endTime || item?.end || 0),
+      };
+    })
+    .filter((segment) => Boolean(segment.text));
+
+  return {
+    provider: `telehealth-${providerId}`,
+    platform: providerId,
+    segments,
+  };
+};

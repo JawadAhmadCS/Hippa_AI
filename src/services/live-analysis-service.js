@@ -76,6 +76,7 @@ export const runLiveAnalysisPipeline = async ({
     inferRuleBasedSuggestions({
       segment: transcriptContext,
       existingCodes,
+      doctorSpecialties: appointment.doctorSpecialties || [],
     }).filter((item) => item.code !== baselineCode),
     {
       transcriptSegments,
@@ -161,6 +162,7 @@ export const runLiveAnalysisPipeline = async ({
           appointmentId: appointment.id,
           insurancePlan: appointment.insurancePlan,
           visitType: appointment.visitType,
+          doctorSpecialties: appointment.doctorSpecialties || [],
           transcriptContext,
           latestSegment,
           baselineCode,

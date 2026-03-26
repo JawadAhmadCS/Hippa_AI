@@ -31,7 +31,11 @@ import {
 import { buildTranscriptPdfBuffer } from "../services/pdf-service.js";
 import { runLiveAnalysisPipeline } from "../services/live-analysis-service.js";
 import { getAzureSpeechToken, uploadAppointmentAudio } from "../services/azure-service.js";
-import { normalizeIncomingTranscript, parseAwsTranscribeMedicalPayload } from "../services/stt-service.js";
+import {
+  normalizeIncomingTranscript,
+  parseAwsTranscribeMedicalPayload,
+  parseTelehealthTranscriptPayload,
+} from "../services/stt-service.js";
 import {
   broadcastAppointmentEvent,
   subscribeToAppointmentStream,
@@ -44,6 +48,7 @@ import {
   loginWithPassword,
   requiresRecentMfa,
   revokeSession,
+  sendLoginSmsCode,
   verifyLogin2fa,
 } from "../services/auth-service.js";
 import {
@@ -61,14 +66,20 @@ import {
 } from "../services/platform-config-service.js";
 import { buildProductionReadinessStatus } from "../services/production-readiness-service.js";
 import { recalculateNoteCoding } from "../services/note-analysis-service.js";
+import { getPatientChartByRef, searchPatientCharts } from "../services/patient-chart-service.js";
+import { writeFinalizedNoteToEhr } from "../services/ehr-service.js";
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 30 * 1024 * 1024 } });
 
-const ensureAppointment = (id, response) => {
+const ensureAppointment = (id, response, auth = null) => {
   const appointment = getAppointment(id);
   if (!appointment) {
     response.status(404).json({ error: "Appointment not found." });
+    return null;
+  }
+  if (auth && auth.clientId && appointment.clientId && String(auth.clientId) !== String(appointment.clientId)) {
+    response.status(403).json({ error: "Appointment is outside your clinic scope." });
     return null;
   }
   return appointment;
@@ -140,6 +151,7 @@ const filterAppointments = ({
   search = "",
   dateFrom = "",
   dateTo = "",
+  clinicId = "",
 } = {}) => {
   const query = String(search || "").trim().toLowerCase();
   const start = normalizeDateOrNull(dateFrom);
@@ -147,6 +159,10 @@ const filterAppointments = ({
   if (end) end.setHours(23, 59, 59, 999);
 
   return listAppointments().filter((appointment) => {
+    if (clinicId && String(appointment.clientId || "") !== String(clinicId)) {
+      return false;
+    }
+
     if (query) {
       const haystack = [
         appointment.id,
@@ -154,6 +170,7 @@ const filterAppointments = ({
         appointment.doctorRef,
         appointment.insurancePlan,
         appointment.visitType,
+        appointment.clientId,
       ]
         .join(" ")
         .toLowerCase();
@@ -274,6 +291,7 @@ const buildNotePayload = ({ appointment, version, analysis, includeVersions = fa
           }))
         : undefined,
       overrideRecords: workflow.overrideRecords || [],
+      delivery: workflow.delivery || {},
     },
     codingAnalysis: analysis || null,
   };
@@ -372,6 +390,7 @@ router.post(
   withAsync(async (request, response) => {
     const username = String(request.body.username || "").trim().toLowerCase();
     const password = String(request.body.password || "");
+    const clientId = String(request.body.clientId || "").trim().toLowerCase();
     if (!username || !password) {
       response.status(400).json({ error: "Username and password are required." });
       return;
@@ -380,12 +399,14 @@ router.post(
     const result = loginWithPassword({
       username,
       password,
+      clientId,
       ip: request.ip,
       userAgent: request.get("user-agent"),
     });
     if (!result.ok) {
       fireAndForgetAudit("auth.login.failed", {
         username,
+        clientId,
         reason: result.error,
         ip: request.ip,
       });
@@ -395,6 +416,7 @@ router.post(
 
     fireAndForgetAudit("auth.login.password.accepted", {
       username,
+      clientId,
       ip: request.ip,
       mfaSetupRequired: Boolean(result.challenge?.mfaSetupRequired),
     });
@@ -403,10 +425,47 @@ router.post(
 );
 
 router.post(
+  "/auth/2fa/sms/send",
+  withAsync(async (request, response) => {
+    const challengeId = String(request.body.challengeId || "").trim();
+    if (!challengeId) {
+      response.status(400).json({ error: "challengeId is required." });
+      return;
+    }
+
+    const result = sendLoginSmsCode({ challengeId });
+    if (!result.ok) {
+      fireAndForgetAudit("auth.login.2fa.sms.failed", {
+        challengeId,
+        ip: request.ip,
+        reason: result.error,
+      });
+      response.status(400).json({ error: result.error || "Unable to send SMS code." });
+      return;
+    }
+
+    fireAndForgetAudit("auth.login.2fa.sms.sent", {
+      challengeId,
+      ip: request.ip,
+      destination: result.destination,
+    });
+    response.json({
+      ok: true,
+      method: result.method,
+      destination: result.destination,
+      sentAt: result.sentAt,
+      expiresAt: result.expiresAt,
+      devCode: result.devCode,
+    });
+  })
+);
+
+router.post(
   "/auth/2fa/verify",
   withAsync(async (request, response) => {
     const challengeId = String(request.body.challengeId || "").trim();
     const code = String(request.body.code || "").trim();
+    const method = String(request.body.method || "totp").trim().toLowerCase();
     if (!challengeId || !code) {
       response.status(400).json({ error: "challengeId and code are required." });
       return;
@@ -415,12 +474,14 @@ router.post(
     const result = verifyLogin2fa({
       challengeId,
       code,
+      method,
       ip: request.ip,
       userAgent: request.get("user-agent"),
     });
     if (!result.ok) {
       fireAndForgetAudit("auth.login.2fa.failed", {
         challengeId,
+        method,
         ip: request.ip,
         reason: result.error,
       });
@@ -432,11 +493,13 @@ router.post(
       userId: result.user?.id,
       username: result.user?.username,
       role: result.user?.role,
+      method: result.mfaMethod,
       ip: request.ip,
     });
     response.json({
       token: result.token,
       expiresAt: result.expiresAt,
+      mfaMethod: result.mfaMethod,
       user: result.user,
     });
   })
@@ -468,12 +531,59 @@ router.get(
         username: request.auth.username,
         role: request.auth.role,
         displayName: request.auth.displayName,
+        clientId: request.auth.clientId || "default-clinic",
+        clientName: request.auth.clientName || "Default Clinic",
+        specialties: Array.isArray(request.auth.specialties) ? request.auth.specialties : [],
       },
       session: {
         sessionId: request.auth.sessionId,
         expiresAt: request.auth.expiresAt,
+        mfaMethod: request.auth.mfaMethod || "totp",
       },
     });
+  })
+);
+
+router.get(
+  "/patient-charts/search",
+  requireAuth({ roles: ["provider", "admin"] }),
+  withAsync(async (request, response) => {
+    const query = String(request.query.q || "").trim();
+    const limit = Number(request.query.limit || 12);
+    const clinicId = String(request.auth.clientId || "").trim();
+    const patients = searchPatientCharts({
+      query,
+      clinicId,
+      limit,
+    });
+    response.json({
+      count: patients.length,
+      clinicId,
+      patients,
+    });
+  })
+);
+
+router.get(
+  "/patient-charts/:patientRef",
+  requireAuth({ roles: ["provider", "admin"] }),
+  withAsync(async (request, response) => {
+    const patientRef = String(request.params.patientRef || "").trim().toUpperCase();
+    if (!patientRef) {
+      response.status(400).json({ error: "patientRef is required." });
+      return;
+    }
+
+    const patient = getPatientChartByRef({
+      patientRef,
+      clinicId: request.auth.clientId || "",
+    });
+    if (!patient) {
+      response.status(404).json({ error: "Patient chart not found for this clinic." });
+      return;
+    }
+
+    response.json({ patient });
   })
 );
 
@@ -481,10 +591,29 @@ router.post(
   "/appointments",
   requireAuth({ roles: ["provider", "admin"] }),
   withAsync(async (request, response) => {
-    const doctorRef = String(request.body.doctorRef || "").trim();
-    const patientRef = String(request.body.patientRef || "anonymous").trim();
+    const doctorRef = String(request.auth.username || request.body.doctorRef || "").trim();
+    const requestedPatientRef = String(request.body.patientRef || "").trim().toUpperCase();
+    const chartPatient = requestedPatientRef
+      ? getPatientChartByRef({
+          patientRef: requestedPatientRef,
+          clinicId: request.auth.clientId || "",
+        })
+      : null;
+    const patientRef = chartPatient?.patientRef || requestedPatientRef || "anonymous";
+    const patientChartId = String(
+      chartPatient?.externalChartId || request.body.patientChartId || ""
+    )
+      .trim()
+      .toUpperCase();
     const consentFormId = String(request.body.consentFormId || "").trim();
     const consentGiven = Boolean(request.body.consentGiven);
+    const encounterMode = String(request.body.encounterMode || "in-person")
+      .trim()
+      .toLowerCase();
+    const telehealthPlatform =
+      encounterMode === "telehealth"
+        ? String(request.body.telehealthPlatform || "generic").trim().toLowerCase()
+        : "";
 
     if (!doctorRef) {
       response.status(400).json({ error: "Doctor reference is required." });
@@ -500,9 +629,15 @@ router.post(
 
     const appointment = createAppointment({
       patientRef,
+      patientChartId,
       doctorRef,
+      doctorSpecialties: Array.isArray(request.auth.specialties) ? request.auth.specialties : [],
+      clientId: request.auth.clientId || "default-clinic",
+      clientName: request.auth.clientName || "Default Clinic",
       insurancePlan: request.body.insurancePlan || "medicare",
       visitType: request.body.visitType || "follow-up",
+      encounterMode,
+      telehealthPlatform,
       consentGiven,
       consentFormId,
       consentSignedAt: request.body.consentSignedAt,
@@ -511,8 +646,14 @@ router.post(
     fireAndForgetAudit("appointment.created", {
       appointmentId: appointment.id,
       patientRef: appointment.patientRef,
+      patientChartId: appointment.patientChartId,
       doctorRef: appointment.doctorRef,
+      doctorSpecialties: appointment.doctorSpecialties,
+      clientId: appointment.clientId,
+      clientName: appointment.clientName,
       insurancePlan: appointment.insurancePlan,
+      encounterMode: appointment.encounterMode,
+      telehealthPlatform: appointment.telehealthPlatform,
       consentGiven: appointment.consentGiven,
       consentFormId: appointment.consentFormId,
       consentSignedAt: appointment.consentSignedAt,
@@ -530,7 +671,12 @@ router.get(
     const search = String(request.query.q || "").trim();
     const dateFrom = String(request.query.dateFrom || "").trim();
     const dateTo = String(request.query.dateTo || "").trim();
-    let appointments = filterAppointments({ search, dateFrom, dateTo });
+    let appointments = filterAppointments({
+      search,
+      dateFrom,
+      dateTo,
+      clinicId: request.auth.clientId || "",
+    });
     response.json({
       appointments,
       filters: {
@@ -546,7 +692,7 @@ router.get(
   "/appointments/:appointmentId",
   requireAuth({ roles: ["provider", "admin"] }),
   withAsync(async (request, response) => {
-    const appointment = ensureAppointment(request.params.appointmentId, response);
+    const appointment = ensureAppointment(request.params.appointmentId, response, request.auth);
     if (!appointment) return;
     response.json({ appointment });
   })
@@ -556,7 +702,7 @@ router.get(
   "/appointments/:appointmentId/note",
   requireAuth({ roles: ["provider", "admin"] }),
   withAsync(async (request, response) => {
-    const appointment = ensureAppointment(request.params.appointmentId, response);
+    const appointment = ensureAppointment(request.params.appointmentId, response, request.auth);
     if (!appointment) return;
 
     const version = ensureNoteDraftVersion(appointment.id) || getCurrentNoteVersion(appointment.id);
@@ -590,7 +736,7 @@ router.put(
   "/appointments/:appointmentId/note",
   requireAuth({ roles: ["provider", "admin"] }),
   withAsync(async (request, response) => {
-    const appointment = ensureAppointment(request.params.appointmentId, response);
+    const appointment = ensureAppointment(request.params.appointmentId, response, request.auth);
     if (!appointment) return;
 
     const currentVersion = ensureNoteDraftVersion(appointment.id) || getCurrentNoteVersion(appointment.id);
@@ -665,7 +811,7 @@ router.post(
   "/appointments/:appointmentId/note/recalculate",
   requireAuth({ roles: ["provider", "admin"] }),
   withAsync(async (request, response) => {
-    const appointment = ensureAppointment(request.params.appointmentId, response);
+    const appointment = ensureAppointment(request.params.appointmentId, response, request.auth);
     if (!appointment) return;
 
     const current = ensureNoteDraftVersion(appointment.id) || getCurrentNoteVersion(appointment.id);
@@ -689,7 +835,7 @@ router.post(
   "/appointments/:appointmentId/note/finalize",
   requireAuth({ roles: ["provider", "admin"], requireFreshMfa: true }),
   withAsync(async (request, response) => {
-    const appointment = ensureAppointment(request.params.appointmentId, response);
+    const appointment = ensureAppointment(request.params.appointmentId, response, request.auth);
     if (!appointment) return;
 
     const current = ensureNoteDraftVersion(appointment.id) || getCurrentNoteVersion(appointment.id);
@@ -729,6 +875,32 @@ router.post(
       return;
     }
 
+    const finalizedPacket = getFinalizedNotePacket(appointment.id);
+    let ehrWrite = null;
+    if (finalizedPacket) {
+      ehrWrite = await writeFinalizedNoteToEhr({
+        appointmentId: appointment.id,
+        clientId: appointment.clientId,
+        doctorRef: appointment.doctorRef,
+        patientRef: appointment.patientRef,
+        patientChartId: appointment.patientChartId,
+        finalVersion: finalizedPacket.finalVersion,
+        codingAnalysis: finalizedPacket.codingAnalysis,
+      }).catch(() => null);
+    }
+    if (ehrWrite) {
+      appointment.noteWorkflow.delivery = {
+        ...(appointment.noteWorkflow?.delivery || {}),
+        ehrSentAt: ehrWrite.writtenAt,
+        ehrDestination: ehrWrite.destination,
+        ehrExternalRecordId: ehrWrite.externalRecordId,
+      };
+      result.delivery = {
+        ...(result.delivery || {}),
+        ...appointment.noteWorkflow.delivery,
+      };
+    }
+
     broadcastAppointmentEvent(appointment.id, "note.finalized", {
       appointmentId: appointment.id,
       noteId: appointment.noteWorkflow?.noteId,
@@ -748,6 +920,7 @@ router.post(
       overrideReason,
       overrideCount: overrides.length,
       delivery: result.delivery,
+      ehrWrite,
     });
 
     response.json(
@@ -765,7 +938,7 @@ router.get(
   "/appointments/:appointmentId/note/versions",
   requireAuth({ roles: ["provider", "admin"] }),
   withAsync(async (request, response) => {
-    const appointment = ensureAppointment(request.params.appointmentId, response);
+    const appointment = ensureAppointment(request.params.appointmentId, response, request.auth);
     if (!appointment) return;
     const versions = listNoteVersions(appointment.id);
     response.json({
@@ -780,12 +953,20 @@ router.get(
 router.get(
   "/billing/queue",
   requireAuth({ roles: ["billing", "admin"] }),
-  withAsync(async (_request, response) => {
+  withAsync(async (request, response) => {
     const queue = listAppointmentRecords()
+      .filter((item) =>
+        request.auth.clientId ? String(item.clientId || "") === String(request.auth.clientId) : true
+      )
       .map((item) => getFinalizedNotePacket(item.id))
       .filter(Boolean)
       .map((packet) => ({
         appointmentId: packet.appointmentId,
+        patientRef: packet.patientRef,
+        patientChartId: packet.patientChartId,
+        doctorRef: packet.doctorRef,
+        encounterMode: packet.encounterMode,
+        telehealthPlatform: packet.telehealthPlatform,
         noteId: packet.noteId,
         finalizedAt: packet.finalizedAt,
         approvedCodes: packet.approvedCodes || [],
@@ -804,6 +985,14 @@ router.get(
       response.status(404).json({ error: "No finalized note available for billing." });
       return;
     }
+    if (
+      request.auth.clientId &&
+      packet.clientId &&
+      String(request.auth.clientId) !== String(packet.clientId)
+    ) {
+      response.status(403).json({ error: "Appointment is outside your clinic scope." });
+      return;
+    }
     response.json(packet);
   })
 );
@@ -812,7 +1001,7 @@ router.get(
   "/appointments/:appointmentId/transcript.pdf",
   requireAuth({ roles: ["provider", "admin"] }),
   withAsync(async (request, response) => {
-    const appointment = ensureAppointment(request.params.appointmentId, response);
+    const appointment = ensureAppointment(request.params.appointmentId, response, request.auth);
     if (!appointment) return;
 
     const lines = buildTranscriptExportLines(appointment);
@@ -834,7 +1023,7 @@ router.get(
   "/appointments/:appointmentId/audit",
   requireAuth({ roles: ["provider", "admin"] }),
   withAsync(async (request, response) => {
-    const appointment = ensureAppointment(request.params.appointmentId, response);
+    const appointment = ensureAppointment(request.params.appointmentId, response, request.auth);
     if (!appointment) return;
 
     const limit = Number(request.query.limit || 200);
@@ -858,7 +1047,12 @@ router.get(
     const granularity = String(request.query.granularity || "daily").trim().toLowerCase();
     const dateFrom = String(request.query.dateFrom || "").trim();
     const dateTo = String(request.query.dateTo || "").trim();
-    const report = buildRevenueReport({ granularity, dateFrom, dateTo });
+    const report = buildRevenueReport({
+      granularity,
+      dateFrom,
+      dateTo,
+      clinicId: request.auth.clientId || "",
+    });
     response.json(report);
   })
 );
@@ -870,7 +1064,12 @@ router.get(
     const granularity = String(request.query.granularity || "daily").trim().toLowerCase();
     const dateFrom = String(request.query.dateFrom || "").trim();
     const dateTo = String(request.query.dateTo || "").trim();
-    const report = buildRevenueReport({ granularity, dateFrom, dateTo });
+    const report = buildRevenueReport({
+      granularity,
+      dateFrom,
+      dateTo,
+      clinicId: request.auth.clientId || "",
+    });
     const csv = buildRevenueCsv({ report });
     const fileName = `revenue-report-${new Date().toISOString().slice(0, 10)}.csv`;
 
@@ -884,7 +1083,7 @@ router.get(
   "/appointments/:appointmentId/stream",
   requireAuth({ roles: ["provider", "admin"] }),
   withAsync(async (request, response) => {
-    const appointment = ensureAppointment(request.params.appointmentId, response);
+    const appointment = ensureAppointment(request.params.appointmentId, response, request.auth);
     if (!appointment) return;
 
     response.setHeader("Content-Type", "text/event-stream");
@@ -924,7 +1123,7 @@ router.post(
   "/appointments/:appointmentId/transcript",
   requireAuth({ roles: ["provider", "admin"] }),
   withAsync(async (request, response) => {
-    const appointment = ensureAppointment(request.params.appointmentId, response);
+    const appointment = ensureAppointment(request.params.appointmentId, response, request.auth);
     if (!appointment) return;
 
     if (!appointment.consentGiven) {
@@ -951,7 +1150,7 @@ router.post(
   "/appointments/:appointmentId/transcript/aws-transcribe",
   requireAuth({ roles: ["provider", "admin"] }),
   withAsync(async (request, response) => {
-    const appointment = ensureAppointment(request.params.appointmentId, response);
+    const appointment = ensureAppointment(request.params.appointmentId, response, request.auth);
     if (!appointment) return;
 
     if (!appointment.consentGiven) {
@@ -1018,11 +1217,82 @@ router.post(
 );
 
 router.post(
+  "/appointments/:appointmentId/transcript/telehealth",
+  requireAuth({ roles: ["provider", "admin"] }),
+  withAsync(async (request, response) => {
+    const appointment = ensureAppointment(request.params.appointmentId, response, request.auth);
+    if (!appointment) return;
+
+    if (!appointment.consentGiven) {
+      response.status(403).json({ error: "Consent is required before recording/transcription." });
+      return;
+    }
+
+    const parsed = parseTelehealthTranscriptPayload(request.body || {});
+    if (!parsed.segments.length) {
+      response.status(202).json({
+        accepted: false,
+        reason: "no-usable-telehealth-segments",
+        stt: { provider: parsed.provider, platform: parsed.platform, segmentsReceived: 0 },
+      });
+      return;
+    }
+
+    const finalSegments = parsed.segments.filter((item) => !item.isPartial);
+    if (!finalSegments.length) {
+      const latestPartial = parsed.segments[parsed.segments.length - 1] || null;
+      broadcastAppointmentEvent(appointment.id, "transcript.partial", {
+        appointmentId: appointment.id,
+        provider: parsed.provider,
+        partialText: latestPartial?.text || "",
+        at: new Date().toISOString(),
+      });
+
+      response.status(202).json({
+        accepted: false,
+        partial: true,
+        reason: "telehealth-partial-only",
+        stt: {
+          provider: parsed.provider,
+          platform: parsed.platform,
+          segmentsReceived: parsed.segments.length,
+        },
+      });
+      return;
+    }
+
+    const mergedText = finalSegments
+      .map((segment) =>
+        segment.speaker ? `${segment.speaker}: ${segment.text}` : String(segment.text || "")
+      )
+      .filter(Boolean)
+      .join(" ");
+    const source = parsed.provider;
+
+    const payload = await processTranscriptSegment({
+      appointment,
+      rawSegment: mergedText,
+      source,
+    });
+
+    response.json({
+      ...payload,
+      stt: {
+        provider: parsed.provider,
+        platform: parsed.platform,
+        segmentsReceived: parsed.segments.length,
+        processedFinalSegments: finalSegments.length,
+      },
+    });
+  })
+);
+
+router.post(
   "/appointments/:appointmentId/audio",
   requireAuth({ roles: ["provider", "admin"] }),
   upload.single("audio"),
   withAsync(async (request, response) => {
-    const appointment = ensureAppointment(request.params.appointmentId, response);
+    const appointment = ensureAppointment(request.params.appointmentId, response, request.auth);
     if (!appointment) return;
     if (!request.file) {
       response.status(400).json({ error: "Audio file is required." });
@@ -1332,7 +1602,9 @@ router.get(
         azureSpeechConfigured: featureFlags.hasAzureSpeech,
         azureBlobConfigured: featureFlags.hasAzureBlobStorage,
         awsTranscribeMedicalIngestion: true,
+        telehealthTranscriptIngestion: true,
         realtimeStreamingConfigured: true,
+        ehrWritebackOnFinalize: true,
       },
       latencyTargets: {
         aiTargetMs: env.aiTargetLatencyMs,
@@ -1351,6 +1623,7 @@ router.get(
       notes: [
         "Prototype enforces intake consent gate before transcription capture.",
         "Audit trail uses hash chaining and PHI-redacted payloads.",
+        "Finalized chart notes are written to a mock EHR adapter with external record IDs.",
         "Final coding should always be reviewed by certified billing/coding staff.",
       ],
     });
@@ -1358,3 +1631,4 @@ router.get(
 );
 
 export default router;
+

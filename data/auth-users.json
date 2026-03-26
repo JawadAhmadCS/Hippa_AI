@@ -1,0 +1,102 @@
+{
+  "users": [
+    {
+      "id": "fc7783e3-336c-4075-a83c-10c8552db5d1",
+      "username": "provider1",
+      "displayName": "Dr. Sarah Ahmed",
+      "role": "provider",
+      "clientId": "north-hill-clinic",
+      "clientName": "North Hill Clinic",
+      "specialties": [
+        "Internal Medicine",
+        "Cardiology"
+      ],
+      "phoneNumber": "+15550001001",
+      "sms2faEnabled": true,
+      "passwordSalt": "72e30f5c3854b87f27b07c85be2cf742",
+      "passwordHash": "395a813d31038f4e2dfe33c682e103a0f28cc2bb6572d62806fc095556025a7f",
+      "failedAttempts": 0,
+      "lockedUntil": "",
+      "createdAt": "2026-03-26T21:14:44.444Z",
+      "updatedAt": "2026-03-26T21:14:45.783Z",
+      "totp": {
+        "enabled": false,
+        "secret": "FEPX3M2XC5O6S3LRX3NQ",
+        "enabledAt": "",
+        "lastUsedCounter": -1
+      }
+    },
+    {
+      "id": "08ace418-44e0-4542-b771-836f4a758d36",
+      "username": "billing1",
+      "displayName": "Billing User",
+      "role": "billing",
+      "clientId": "north-hill-clinic",
+      "clientName": "North Hill Clinic",
+      "specialties": [],
+      "phoneNumber": "+15550001002",
+      "sms2faEnabled": true,
+      "passwordSalt": "f8be4b624af6505bf812fafef87ad0a7",
+      "passwordHash": "4fcac0251846bce75130e5c3ca7d6f8c066c1100a7c5a85d39936bfd02a96062",
+      "failedAttempts": 0,
+      "lockedUntil": "",
+      "createdAt": "2026-03-26T21:14:44.766Z",
+      "updatedAt": "2026-03-26T21:14:44.766Z",
+      "totp": {
+        "enabled": false,
+        "secret": "52BUBRKDR5LFKAZKJJYC",
+        "enabledAt": "",
+        "lastUsedCounter": -1
+      }
+    },
+    {
+      "id": "6f33c582-28a0-4b5d-a96d-9a1ed96900ca",
+      "username": "provider2",
+      "displayName": "Dr. Maria Khan",
+      "role": "provider",
+      "clientId": "city-general-hospital",
+      "clientName": "City General Hospital",
+      "specialties": [
+        "Family Medicine",
+        "Pediatrics"
+      ],
+      "phoneNumber": "+15550001003",
+      "sms2faEnabled": true,
+      "passwordSalt": "4de9587a7c800961e5d462be2db9dfc9",
+      "passwordHash": "a9dbf84f9cfbf39683b1d2ff977b90e5754fdd35a2c568079b88efd7b16acaed",
+      "failedAttempts": 0,
+      "lockedUntil": "",
+      "createdAt": "2026-03-26T21:14:45.082Z",
+      "updatedAt": "2026-03-26T21:14:45.082Z",
+      "totp": {
+        "enabled": false,
+        "secret": "OMUXTUBB3DQK3OZTIYJI",
+        "enabledAt": "",
+        "lastUsedCounter": -1
+      }
+    },
+    {
+      "id": "b953e42c-ff6f-46ef-a1b6-74b208487a1c",
+      "username": "admin1",
+      "displayName": "Admin User",
+      "role": "admin",
+      "clientId": "city-general-hospital",
+      "clientName": "City General Hospital",
+      "specialties": [],
+      "phoneNumber": "+15550001004",
+      "sms2faEnabled": true,
+      "passwordSalt": "84af2770657598822f38cc7d7171e736",
+      "passwordHash": "82793526194eab5a5727205b35e0c319995053afe957c7b75f35a9036793d6b9",
+      "failedAttempts": 0,
+      "lockedUntil": "",
+      "createdAt": "2026-03-26T21:14:45.347Z",
+      "updatedAt": "2026-03-26T21:14:45.347Z",
+      "totp": {
+        "enabled": false,
+        "secret": "L4TSPNSWIBDJFEUSIMHO",
+        "enabledAt": "",
+        "lastUsedCounter": -1
+      }
+    }
+  ]
+}

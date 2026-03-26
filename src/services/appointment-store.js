@@ -2,12 +2,19 @@ import crypto from "node:crypto";
 
 const appointments = new Map();
 const NOTE_FIELDS = ["hpi", "ros", "exam", "assessment", "plan"];
-const NOTE_EXTRA_FIELDS = ["additionalProviderNotes", "freeTextAdditions"];
+const NOTE_EXTRA_FIELDS = ["freeTextAdditions"];
 
 const roundMoney = (value) => Number(Number(value || 0).toFixed(2));
 const nowIso = () => new Date().toISOString();
 
 const normalizeNoteValue = (value) => String(value || "").trim();
+const mergeProviderAdditions = (content = {}) =>
+  [
+    normalizeNoteValue(content?.additionalProviderNotes),
+    normalizeNoteValue(content?.freeTextAdditions),
+  ]
+    .filter(Boolean)
+    .join("\n\n");
 
 const normalizeNoteContent = (content = {}) => ({
   sections: {
@@ -17,8 +24,8 @@ const normalizeNoteContent = (content = {}) => ({
     assessment: normalizeNoteValue(content?.sections?.assessment),
     plan: normalizeNoteValue(content?.sections?.plan),
   },
-  additionalProviderNotes: normalizeNoteValue(content?.additionalProviderNotes),
-  freeTextAdditions: normalizeNoteValue(content?.freeTextAdditions),
+  additionalProviderNotes: "",
+  freeTextAdditions: mergeProviderAdditions(content),
 });
 
 const emptyNoteContent = () => normalizeNoteContent({});
@@ -162,7 +169,6 @@ const mapChartNotesToContent = (appointment) => {
       assessment: linesBySection.assessment.join("\n"),
       plan: linesBySection.plan.join("\n"),
     },
-    additionalProviderNotes: "",
     freeTextAdditions: "",
   });
 };
@@ -219,9 +225,15 @@ const buildAppointmentSummary = (appointment) => {
   return {
     id: appointment.id,
     patientRef: appointment.patientRef,
+    patientChartId: appointment.patientChartId,
     doctorRef: appointment.doctorRef,
+    doctorSpecialties: Array.isArray(appointment.doctorSpecialties) ? appointment.doctorSpecialties : [],
+    clientId: appointment.clientId || "default-clinic",
+    clientName: appointment.clientName || "Default Clinic",
     insurancePlan: appointment.insurancePlan,
     visitType: appointment.visitType,
+    encounterMode: appointment.encounterMode || "in-person",
+    telehealthPlatform: appointment.telehealthPlatform || "",
     consentGiven: appointment.consentGiven,
     createdAt: appointment.createdAt,
     transcriptCount: appointment.transcriptSegments.length,
@@ -240,9 +252,15 @@ const buildAppointmentSummary = (appointment) => {
 
 export const createAppointment = ({
   patientRef,
+  patientChartId = "",
   doctorRef,
+  doctorSpecialties = [],
+  clientId = "",
+  clientName = "",
   insurancePlan,
   visitType,
+  encounterMode = "in-person",
+  telehealthPlatform = "",
   consentGiven,
   consentFormId,
   consentSignedAt,
@@ -251,9 +269,17 @@ export const createAppointment = ({
   const appointment = {
     id,
     patientRef,
+    patientChartId: String(patientChartId || "").trim(),
     doctorRef,
+    doctorSpecialties: Array.isArray(doctorSpecialties)
+      ? Array.from(new Set(doctorSpecialties.map((item) => String(item || "").trim()).filter(Boolean)))
+      : [],
+    clientId: String(clientId || "default-clinic").trim().toLowerCase(),
+    clientName: String(clientName || "Default Clinic").trim(),
     insurancePlan: insurancePlan || "medicare",
     visitType: visitType || "follow-up",
+    encounterMode: String(encounterMode || "in-person").trim().toLowerCase(),
+    telehealthPlatform: String(telehealthPlatform || "").trim().toLowerCase(),
     consentGiven: Boolean(consentGiven),
     consentFormId: consentFormId || "",
     consentSignedAt: consentSignedAt || new Date().toISOString(),
@@ -539,6 +565,16 @@ export const finalizeCurrentNote = ({
   const workflow = appointment.noteWorkflow;
   const current = getCurrentNoteVersion(appointmentId);
   if (!current) return null;
+  const fallbackCodes = Array.isArray(workflow.currentAnalysis?.cptCodes)
+    ? workflow.currentAnalysis.cptCodes.map((item) => String(item?.code || "").trim().toUpperCase())
+    : Array.isArray(appointment.revenueTracker?.billableCodes)
+      ? appointment.revenueTracker.billableCodes
+          .map((item) => String(item?.code || "").trim().toUpperCase())
+          .filter(Boolean)
+      : [];
+  const normalizedFinalCodes = Array.isArray(finalCodes)
+    ? finalCodes.map((item) => String(item || "").trim().toUpperCase()).filter(Boolean)
+    : fallbackCodes.filter(Boolean);
 
   const finalizedVersion = {
     ...current,
@@ -547,10 +583,7 @@ export const finalizeCurrentNote = ({
     finalizedBy: actorId,
     finalizedRole: actorRole,
     finalizedAt: nowIso(),
-    finalCodes:
-      finalCodes ||
-      workflow.currentAnalysis?.cptCodes ||
-      (appointment.revenueTracker?.billableCodes || []).map((item) => item.code),
+    finalCodes: normalizedFinalCodes,
     overrideReason: normalizeNoteValue(overrideReason),
   };
 
@@ -587,17 +620,71 @@ export const getFinalizedNotePacket = (appointmentId) => {
   const finalVersion = workflow.versions.find((item) => item.versionId === workflow.finalizedVersionId);
   if (!finalVersion) return null;
 
+  const approvedCodes = (
+    finalVersion.finalCodes ||
+    workflow.currentAnalysis?.cptCodes ||
+    (appointment.revenueTracker?.billableCodes || []).map((item) => item.code)
+  )
+    .map((item) => (typeof item === "string" ? item : String(item?.code || "")))
+    .map((item) => String(item || "").trim().toUpperCase())
+    .filter(Boolean);
+
+  const analysisCodes = Array.isArray(workflow.currentAnalysis?.cptCodes)
+    ? workflow.currentAnalysis.cptCodes
+    : [];
+  const billableCodes = Array.isArray(appointment.revenueTracker?.billableCodes)
+    ? appointment.revenueTracker.billableCodes
+    : [];
+  const codeEvidence = approvedCodes.map((code) => {
+    const analysisMatch =
+      analysisCodes.find((item) => String(item?.code || "").toUpperCase() === code) || null;
+    const billableMatch =
+      billableCodes.find((item) => String(item?.code || "").toUpperCase() === code) || null;
+
+    return {
+      code,
+      title: analysisMatch?.title || billableMatch?.title || "",
+      confidence: Number(analysisMatch?.confidence ?? billableMatch?.confidence ?? 0),
+      rationale: String(analysisMatch?.rationale || billableMatch?.rationale || "").trim(),
+      mdmJustification: String(
+        analysisMatch?.mdmJustification || billableMatch?.mdmJustification || ""
+      ).trim(),
+      evidence: String(analysisMatch?.evidence || billableMatch?.evidence || "").trim(),
+      evidenceRefs: Array.isArray(analysisMatch?.evidenceRefs)
+        ? analysisMatch.evidenceRefs
+        : Array.isArray(billableMatch?.evidenceRefs)
+          ? billableMatch.evidenceRefs
+          : [],
+      estimatedAmount: Number(billableMatch?.estimatedAmount || 0),
+    };
+  });
+
   return {
     appointmentId: appointment.id,
+    patientRef: appointment.patientRef,
+    patientChartId: appointment.patientChartId || "",
+    doctorRef: appointment.doctorRef,
+    doctorSpecialties: Array.isArray(appointment.doctorSpecialties) ? appointment.doctorSpecialties : [],
+    clientId: appointment.clientId || "default-clinic",
+    clientName: appointment.clientName || "Default Clinic",
+    encounterMode: appointment.encounterMode || "in-person",
+    telehealthPlatform: appointment.telehealthPlatform || "",
     noteId: workflow.noteId,
     noteStatus: workflow.status,
     finalizedAt: workflow.finalizedAt,
     finalVersion,
-    approvedCodes:
-      finalVersion.finalCodes ||
-      workflow.currentAnalysis?.cptCodes ||
-      (appointment.revenueTracker?.billableCodes || []).map((item) => item.code),
+    approvedCodes,
+    codeEvidence,
     codingAnalysis: workflow.currentAnalysis || null,
+    transcriptSegments: Array.isArray(appointment.transcriptSegments)
+      ? appointment.transcriptSegments.map((segment) => ({
+          id: segment.id,
+          sequence: segment.sequence,
+          at: segment.at,
+          source: segment.source,
+          cleanedText: segment.cleanedText || segment.text || "",
+        }))
+      : [],
   };
 };
 

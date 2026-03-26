@@ -14,6 +14,7 @@ Rules:
 - Never suggest medically unnecessary services.
 - Only suggest codes supported by explicit transcript evidence.
 - Include a brief transcript-supported evidence string for every item you return.
+- For each CPT/HCPCS suggestion include an explicit MDM justification sentence.
 - Do not suggest baseline E/M code if it is already assumed for the visit.
 - Guidance must be brief, concrete, and phrased as doctor prompts.
 - If a code may be billable but documentation is incomplete, list it under missedBillables and documentationGaps.
@@ -35,11 +36,19 @@ const outputSchema = {
         properties: {
           code: { type: "string" },
           rationale: { type: "string" },
+          mdmJustification: { type: "string" },
           documentationNeeded: { type: "string" },
           confidence: { type: "number", minimum: 0, maximum: 1 },
           evidence: { type: "string" },
         },
-        required: ["code", "rationale", "documentationNeeded", "confidence", "evidence"],
+        required: [
+          "code",
+          "rationale",
+          "mdmJustification",
+          "documentationNeeded",
+          "confidence",
+          "evidence",
+        ],
       },
     },
     icdSuggestions: {
@@ -175,6 +184,7 @@ export const analyzeTranscriptForSuggestions = async ({
   appointmentId,
   insurancePlan,
   visitType,
+  doctorSpecialties = [],
   transcriptContext,
   latestSegment,
   baselineCode = "99213",
@@ -223,6 +233,11 @@ export const analyzeTranscriptForSuggestions = async ({
                   `Appointment ID: ${appointmentId}`,
                   `Insurance Plan: ${insurancePlan}`,
                   `Visit Type: ${visitType}`,
+                  `Doctor Specialties: ${
+                    Array.isArray(doctorSpecialties) && doctorSpecialties.length
+                      ? doctorSpecialties.join(", ")
+                      : "unspecified"
+                  }`,
                   `Baseline E/M code already assumed: ${baselineCode}`,
                   `Existing codes already selected: ${existingCodes.join(", ") || "none"}`,
                   `Latest segment: ${latestSegment || "n/a"}`,

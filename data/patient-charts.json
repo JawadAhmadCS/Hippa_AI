@@ -1,0 +1,28 @@
+{
+  "charts": [
+    {
+      "patientRef": "PT-1042",
+      "externalChartId": "EHR-0001042",
+      "fullName": "John Carter",
+      "dob": "1981-06-14",
+      "lastVisitAt": "2026-03-20T10:15:00.000Z",
+      "clinicId": "north-hill-clinic"
+    },
+    {
+      "patientRef": "PT-2210",
+      "externalChartId": "EHR-0002210",
+      "fullName": "Maria Reed",
+      "dob": "1975-11-03",
+      "lastVisitAt": "2026-03-22T13:40:00.000Z",
+      "clinicId": "north-hill-clinic"
+    },
+    {
+      "patientRef": "PT-7788",
+      "externalChartId": "EHR-0007788",
+      "fullName": "Ava Thompson",
+      "dob": "2012-01-27",
+      "lastVisitAt": "2026-03-21T08:30:00.000Z",
+      "clinicId": "city-general-hospital"
+    }
+  ]
+}

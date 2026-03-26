@@ -40,6 +40,14 @@ const formatCurrency = (value) => `$${roundMoney(value).toFixed(2)}`;
 const getAppointmentRevenue = (appointment) => ({
   projected: Number(appointment.revenueTracker?.projectedTotal || 0),
   earned: Number(appointment.revenueTracker?.earnedNow || 0),
+  current: Number(
+    appointment.revenueTracker?.currentCodesRevenue ?? appointment.revenueTracker?.baseline ?? 0
+  ),
+  suggested: Number(
+    appointment.revenueTracker?.suggestedCodesRevenue ??
+      appointment.revenueTracker?.compliantOpportunity ??
+      0
+  ),
 });
 
 const mapAndSort = (map, keyName) =>
@@ -48,6 +56,8 @@ const mapAndSort = (map, keyName) =>
       ...item,
       projectedRevenue: roundMoney(item.projectedRevenue),
       earnedNow: roundMoney(item.earnedNow),
+      currentCodesRevenue: roundMoney(item.currentCodesRevenue),
+      suggestedCodesRevenue: roundMoney(item.suggestedCodesRevenue),
     }))
     .sort((a, b) => b.projectedRevenue - a.projectedRevenue)
     .map((item) => ({
@@ -55,12 +65,15 @@ const mapAndSort = (map, keyName) =>
       encounters: item.encounters,
       projectedRevenue: item.projectedRevenue,
       earnedNow: item.earnedNow,
+      currentCodesRevenue: item.currentCodesRevenue,
+      suggestedCodesRevenue: item.suggestedCodesRevenue,
     }));
 
 export const buildRevenueReport = ({
   granularity = "daily",
   dateFrom = "",
   dateTo = "",
+  clinicId = "",
 } = {}) => {
   const normalizedGranularity = normalizeGranularity(granularity);
   const start = normalizeDate(dateFrom);
@@ -69,6 +82,7 @@ export const buildRevenueReport = ({
   const all = listAppointmentRecords();
 
   const filtered = all.filter((appointment) => {
+    if (clinicId && String(appointment.clientId || "") !== String(clinicId)) return false;
     const created = normalizeDate(appointment.createdAt);
     if (!created) return false;
     if (start && created < start) return false;
@@ -81,6 +95,8 @@ export const buildRevenueReport = ({
     consentedEncounters: 0,
     totalProjectedRevenue: 0,
     totalEarnedNow: 0,
+    totalCurrentCodesRevenue: 0,
+    totalSuggestedCodesRevenue: 0,
     avgProjectedPerEncounter: 0,
   };
 
@@ -94,9 +110,11 @@ export const buildRevenueReport = ({
     const created = normalizeDate(appointment.createdAt);
     if (!created) continue;
 
-    const { projected, earned } = getAppointmentRevenue(appointment);
+    const { projected, earned, current, suggested } = getAppointmentRevenue(appointment);
     totals.totalProjectedRevenue += projected;
     totals.totalEarnedNow += earned;
+    totals.totalCurrentCodesRevenue += current;
+    totals.totalSuggestedCodesRevenue += suggested;
     if (appointment.consentGiven) totals.consentedEncounters += 1;
 
     const insuranceKey = String(appointment.insurancePlan || "unknown").toLowerCase();
@@ -105,10 +123,14 @@ export const buildRevenueReport = ({
       encounters: 0,
       projectedRevenue: 0,
       earnedNow: 0,
+      currentCodesRevenue: 0,
+      suggestedCodesRevenue: 0,
     };
     insuranceBucket.encounters += 1;
     insuranceBucket.projectedRevenue += projected;
     insuranceBucket.earnedNow += earned;
+    insuranceBucket.currentCodesRevenue += current;
+    insuranceBucket.suggestedCodesRevenue += suggested;
     byInsuranceMap.set(insuranceKey, insuranceBucket);
 
     const visitKey = String(appointment.visitType || "unknown").toLowerCase();
@@ -117,10 +139,14 @@ export const buildRevenueReport = ({
       encounters: 0,
       projectedRevenue: 0,
       earnedNow: 0,
+      currentCodesRevenue: 0,
+      suggestedCodesRevenue: 0,
     };
     visitBucket.encounters += 1;
     visitBucket.projectedRevenue += projected;
     visitBucket.earnedNow += earned;
+    visitBucket.currentCodesRevenue += current;
+    visitBucket.suggestedCodesRevenue += suggested;
     byVisitTypeMap.set(visitKey, visitBucket);
 
     const periodLabel = getPeriodLabel(created, normalizedGranularity);
@@ -129,10 +155,14 @@ export const buildRevenueReport = ({
       encounters: 0,
       projectedRevenue: 0,
       earnedNow: 0,
+      currentCodesRevenue: 0,
+      suggestedCodesRevenue: 0,
     };
     periodBucket.encounters += 1;
     periodBucket.projectedRevenue += projected;
     periodBucket.earnedNow += earned;
+    periodBucket.currentCodesRevenue += current;
+    periodBucket.suggestedCodesRevenue += suggested;
     periodMap.set(periodLabel, periodBucket);
 
     const billableCodes = Array.isArray(appointment.revenueTracker?.billableCodes)
@@ -172,6 +202,8 @@ export const buildRevenueReport = ({
 
   totals.totalProjectedRevenue = roundMoney(totals.totalProjectedRevenue);
   totals.totalEarnedNow = roundMoney(totals.totalEarnedNow);
+  totals.totalCurrentCodesRevenue = roundMoney(totals.totalCurrentCodesRevenue);
+  totals.totalSuggestedCodesRevenue = roundMoney(totals.totalSuggestedCodesRevenue);
   totals.avgProjectedPerEncounter = totals.encounters
     ? roundMoney(totals.totalProjectedRevenue / totals.encounters)
     : 0;
@@ -185,6 +217,8 @@ export const buildRevenueReport = ({
       encounters: item.encounters,
       projectedRevenue: roundMoney(item.projectedRevenue),
       earnedNow: roundMoney(item.earnedNow),
+      currentCodesRevenue: roundMoney(item.currentCodesRevenue),
+      suggestedCodesRevenue: roundMoney(item.suggestedCodesRevenue),
     }))
     .sort((a, b) => String(a.period).localeCompare(String(b.period)));
 
@@ -220,6 +254,14 @@ export const buildRevenueReport = ({
         patientRef: appointment.patientRef,
         insurancePlan: appointment.insurancePlan,
         visitType: appointment.visitType,
+        currentCodesRevenue: roundMoney(
+          appointment.revenueTracker?.currentCodesRevenue ?? appointment.revenueTracker?.baseline ?? 0
+        ),
+        suggestedCodesRevenue: roundMoney(
+          appointment.revenueTracker?.suggestedCodesRevenue ??
+            appointment.revenueTracker?.compliantOpportunity ??
+            0
+        ),
         projectedRevenue: roundMoney(appointment.revenueTracker?.projectedTotal || 0),
         earnedNow: roundMoney(appointment.revenueTracker?.earnedNow || 0),
       })),
@@ -231,23 +273,31 @@ export const buildRevenueCsv = ({ report }) => {
   lines.push("Section,Key,Value");
   lines.push(`Totals,encounters,${report.totals.encounters}`);
   lines.push(`Totals,consentedEncounters,${report.totals.consentedEncounters}`);
+  lines.push(`Totals,totalCurrentCodesRevenue,${formatCurrency(report.totals.totalCurrentCodesRevenue)}`);
+  lines.push(
+    `Totals,totalSuggestedCodesRevenue,${formatCurrency(report.totals.totalSuggestedCodesRevenue)}`
+  );
   lines.push(`Totals,totalProjectedRevenue,${formatCurrency(report.totals.totalProjectedRevenue)}`);
   lines.push(`Totals,totalEarnedNow,${formatCurrency(report.totals.totalEarnedNow)}`);
   lines.push(
     `Totals,avgProjectedPerEncounter,${formatCurrency(report.totals.avgProjectedPerEncounter)}`
   );
   lines.push("");
-  lines.push("ByInsurance,insurancePlan,encounters,projectedRevenue,earnedNow");
+  lines.push(
+    "ByInsurance,insurancePlan,encounters,currentCodesRevenue,suggestedCodesRevenue,projectedRevenue,earnedNow"
+  );
   for (const row of report.byInsurance || []) {
     lines.push(
-      `ByInsurance,${row.insurancePlan},${row.encounters},${row.projectedRevenue},${row.earnedNow}`
+      `ByInsurance,${row.insurancePlan},${row.encounters},${row.currentCodesRevenue},${row.suggestedCodesRevenue},${row.projectedRevenue},${row.earnedNow}`
     );
   }
   lines.push("");
-  lines.push("ByVisitType,visitType,encounters,projectedRevenue,earnedNow");
+  lines.push(
+    "ByVisitType,visitType,encounters,currentCodesRevenue,suggestedCodesRevenue,projectedRevenue,earnedNow"
+  );
   for (const row of report.byVisitType || []) {
     lines.push(
-      `ByVisitType,${row.visitType},${row.encounters},${row.projectedRevenue},${row.earnedNow}`
+      `ByVisitType,${row.visitType},${row.encounters},${row.currentCodesRevenue},${row.suggestedCodesRevenue},${row.projectedRevenue},${row.earnedNow}`
     );
   }
   lines.push("");
@@ -263,10 +313,12 @@ export const buildRevenueCsv = ({ report }) => {
     lines.push(`MissedOpportunity,${row.potentialCode},"${safeComponent}",${row.count}`);
   }
   lines.push("");
-  lines.push("Trend,period,encounters,projectedRevenue,earnedNow");
+  lines.push(
+    "Trend,period,encounters,currentCodesRevenue,suggestedCodesRevenue,projectedRevenue,earnedNow"
+  );
   for (const row of report.trendSeries || []) {
     lines.push(
-      `Trend,${row.period},${row.encounters},${row.projectedRevenue},${row.earnedNow}`
+      `Trend,${row.period},${row.encounters},${row.currentCodesRevenue},${row.suggestedCodesRevenue},${row.projectedRevenue},${row.earnedNow}`
     );
   }
 

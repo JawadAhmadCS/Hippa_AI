@@ -32,16 +32,17 @@ const clampConfidence = (value) => Math.max(0, Math.min(1, Number(value) || 0));
 
 const normalizeNoteForAnalysis = (noteContent = {}) => {
   const sections = noteContent?.sections || {};
+  const providerAdditions = [noteContent.additionalProviderNotes, noteContent.freeTextAdditions]
+    .map((item) => String(item || "").trim())
+    .filter(Boolean)
+    .join("\n");
   const lines = [
     `HPI: ${String(sections.hpi || "").trim()}`,
     `ROS: ${String(sections.ros || "").trim()}`,
     `Exam: ${String(sections.exam || "").trim()}`,
     `Assessment: ${String(sections.assessment || "").trim()}`,
     `Plan: ${String(sections.plan || "").trim()}`,
-    `Additional Provider Notes / Clarifications: ${String(
-      noteContent.additionalProviderNotes || ""
-    ).trim()}`,
-    `Free-text additions: ${String(noteContent.freeTextAdditions || "").trim()}`,
+    `Provider additions in chart note: ${providerAdditions}`,
   ];
 
   return lines.filter((line) => !line.endsWith(":")).join("\n");
@@ -100,13 +101,19 @@ const buildJustification = ({ cptCodes = [], icdCodes = [], documentationImprove
         .map((item) => `${item.code} (${Math.round((item.confidence || 0) * 100)}%)`)
         .join(", ")}`
     : "CPT: insufficient support";
+  const mdmPart = cptCodes.length
+    ? `MDM: ${cptCodes
+        .slice(0, 2)
+        .map((item) => item.mdmJustification || "Document problems, data reviewed, and risk.")
+        .join(" | ")}`
+    : "MDM: no supported MDM-level recommendation yet";
   const icdPart = icdCodes.length
     ? `ICD: ${icdCodes.slice(0, 4).map((item) => item.code).join(", ")}`
     : "ICD: no strong suggestion";
   const promptPart = documentationImprovements.length
     ? `Documentation prompts: ${documentationImprovements.slice(0, 3).map((item) => item.text).join(" | ")}`
     : "Documentation prompts: none";
-  return `${codePart}. ${icdPart}. ${promptPart}.`;
+  return `${codePart}. ${mdmPart}. ${icdPart}. ${promptPart}.`;
 };
 
 const averageConfidence = (cptCodes = [], icdCodes = []) => {
@@ -129,6 +136,7 @@ export const recalculateNoteCoding = async ({
     inferRuleBasedSuggestions({
       segment: noteText,
       existingCodes: new Set(),
+      doctorSpecialties: appointment.doctorSpecialties || [],
     }),
     {
       transcriptSegments,
@@ -184,11 +192,12 @@ export const recalculateNoteCoding = async ({
   if (featureFlags.hasOpenAi && noteText.length > 8) {
     try {
       const ai = await analyzeTranscriptForSuggestions({
-        appointmentId: appointment.id,
-        insurancePlan: appointment.insurancePlan,
-        visitType: appointment.visitType,
-        transcriptContext: noteText,
-        latestSegment: noteText,
+          appointmentId: appointment.id,
+          insurancePlan: appointment.insurancePlan,
+          visitType: appointment.visitType,
+          doctorSpecialties: appointment.doctorSpecialties || [],
+          transcriptContext: noteText,
+          latestSegment: noteText,
         baselineCode,
         existingCodes: [],
       });

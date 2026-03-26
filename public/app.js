@@ -3,6 +3,8 @@ const state = {
     token: "",
     user: null,
     challengeId: "",
+    availableFactors: ["totp"],
+    preferredFactor: "totp",
   },
   appointment: null,
   mediaRecorder: null,
@@ -61,6 +63,8 @@ const state = {
   hipaa: {
     settings: null,
   },
+  clientLandingId: "",
+  clientLandingName: "",
 };
 
 const ui = {
@@ -79,9 +83,13 @@ const ui = {
   logoutBtn: document.getElementById("logoutBtn"),
   doctorRef: document.getElementById("doctorRef"),
   patientRef: document.getElementById("patientRef"),
+  patientLookupBtn: document.getElementById("patientLookupBtn"),
+  patientChartOptions: document.getElementById("patientChartOptions"),
   consentFormId: document.getElementById("consentFormId"),
   insurancePlan: document.getElementById("insurancePlan"),
   visitType: document.getElementById("visitType"),
+  encounterMode: document.getElementById("encounterMode"),
+  telehealthPlatform: document.getElementById("telehealthPlatform"),
   consentGiven: document.getElementById("consentGiven"),
   consentBadge: document.getElementById("consentBadge"),
   startBtn: document.getElementById("startBtn"),
@@ -109,7 +117,6 @@ const ui = {
   noteExamEditor: document.getElementById("noteExamEditor"),
   noteAssessmentEditor: document.getElementById("noteAssessmentEditor"),
   notePlanEditor: document.getElementById("notePlanEditor"),
-  noteAdditionalProvider: document.getElementById("noteAdditionalProvider"),
   noteFreeText: document.getElementById("noteFreeText"),
   recalculateNoteBtn: document.getElementById("recalculateNoteBtn"),
   saveNoteDraftBtn: document.getElementById("saveNoteDraftBtn"),
@@ -141,7 +148,9 @@ const ui = {
   refreshBillingQueueBtn: document.getElementById("refreshBillingQueueBtn"),
   billingQueueBody: document.getElementById("billingQueueBody"),
   billingFinalNotePreview: document.getElementById("billingFinalNotePreview"),
+  billingTranscriptPreview: document.getElementById("billingTranscriptPreview"),
   billingApprovedCodes: document.getElementById("billingApprovedCodes"),
+  billingCodeEvidence: document.getElementById("billingCodeEvidence"),
   pastAuditSummary: document.getElementById("pastAuditSummary"),
   pastEncounterAuditList: document.getElementById("pastEncounterAuditList"),
   reportGeneratedAt: document.getElementById("reportGeneratedAt"),
@@ -238,6 +247,13 @@ const ui = {
   evidenceTitle: document.getElementById("transcriptEvidenceTitle"),
   evidenceSubtitle: document.getElementById("transcriptEvidenceSubtitle"),
   evidenceBody: document.getElementById("transcriptEvidenceBody"),
+  authFactorMethod: document.getElementById("authFactorMethod"),
+  authSendSmsBtn: document.getElementById("authSendSmsBtn"),
+  authSmsHint: document.getElementById("authSmsHint"),
+  authSetupQr: document.getElementById("authSetupQr"),
+  authPortalLabel: document.getElementById("authPortalLabel"),
+  brandName: document.getElementById("brandName"),
+  brandBreadcrumb: document.getElementById("brandBreadcrumb"),
 };
 
 const safeNumber = (value) => Number(value || 0).toFixed(2);
@@ -265,6 +281,48 @@ const defaultPrefs = {
   autoOpenPastAfterStop: false,
   autoRefreshReports: true,
   compactTables: false,
+};
+
+const toTitle = (value) =>
+  String(value || "")
+    .split(/[-_\s]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+
+const getClientLandingContext = () => {
+  const pathParts = String(window.location.pathname || "/")
+    .split("/")
+    .map((part) => String(part || "").trim().toLowerCase())
+    .filter(Boolean);
+  if (pathParts.length >= 2 && (pathParts[0] === "c" || pathParts[0] === "clinic")) {
+    const clientId = pathParts[1];
+    return {
+      clientId,
+      clientName: toTitle(clientId),
+    };
+  }
+  return {
+    clientId: "",
+    clientName: "",
+  };
+};
+
+const applyClientLandingContext = () => {
+  const context = getClientLandingContext();
+  state.clientLandingId = context.clientId;
+  state.clientLandingName = context.clientName;
+  if (context.clientName) {
+    const branded = `${context.clientName} Revenue Copilot`;
+    if (ui.brandName) ui.brandName.textContent = branded;
+    if (ui.brandBreadcrumb) ui.brandBreadcrumb.textContent = branded;
+    document.title = branded;
+  }
+  if (ui.authPortalLabel) {
+    ui.authPortalLabel.textContent = context.clientId
+      ? `Clinic portal: ${context.clientName} (${context.clientId})`
+      : "Clinic portal: all clients";
+  }
 };
 
 const formatCurrency = (value) => `$${safeNumber(value)}`;
@@ -307,6 +365,8 @@ const writeAuthToken = (token) => {
 const clearAuthState = () => {
   state.auth.user = null;
   state.auth.challengeId = "";
+  state.auth.availableFactors = ["totp"];
+  state.auth.preferredFactor = "totp";
   writeAuthToken("");
 };
 
@@ -318,7 +378,7 @@ const setAuthUserUi = () => {
   const user = state.auth.user;
   if (ui.authUserText) {
     ui.authUserText.textContent = user
-      ? `${user.displayName || user.username} (${user.role})`
+      ? `${user.displayName || user.username} (${user.role})${user.clientName ? ` - ${user.clientName}` : ""}`
       : "Not signed in";
   }
   if (ui.authUserPill) {
@@ -326,6 +386,24 @@ const setAuthUserUi = () => {
   }
   if (ui.logoutBtn) {
     ui.logoutBtn.disabled = !user;
+  }
+};
+
+const applyUserContextToEncounterForm = () => {
+  const user = state.auth.user;
+  if (!user) return;
+  if (ui.doctorRef) {
+    ui.doctorRef.value = String(user.username || user.id || "").trim();
+  }
+  if (ui.prefDoctorRef && !ui.prefDoctorRef.value.trim()) {
+    ui.prefDoctorRef.value = String(user.username || "default").trim() || "default";
+  }
+  if (ui.authPortalLabel && (user.clientId || state.clientLandingId)) {
+    const clientId = String(user.clientId || state.clientLandingId || "").trim();
+    const clientName = String(user.clientName || state.clientLandingName || "").trim();
+    ui.authPortalLabel.textContent = clientId
+      ? `Clinic portal: ${clientName || toTitle(clientId)} (${clientId})`
+      : ui.authPortalLabel.textContent;
   }
 };
 
@@ -409,6 +487,20 @@ const setConsentBadgeState = () => {
   }
   ui.consentBadge.textContent = "Required";
   ui.consentBadge.classList.remove("signed");
+};
+
+const syncEncounterModeUi = () => {
+  const mode = String(ui.encounterMode?.value || "in-person").trim().toLowerCase();
+  if (!ui.telehealthPlatform) return;
+  if (mode === "telehealth") {
+    ui.telehealthPlatform.disabled = false;
+    if (!String(ui.telehealthPlatform.value || "").trim()) {
+      ui.telehealthPlatform.value = "zoom";
+    }
+    return;
+  }
+  ui.telehealthPlatform.value = "";
+  ui.telehealthPlatform.disabled = true;
 };
 
 const setTranscriptBadge = (text, active = false) => {
@@ -635,7 +727,7 @@ const addAssistantMessage = (text) => {
 const renderSuggestions = (suggestions) => {
   ui.suggestionList.innerHTML = "";
   if (!Array.isArray(suggestions) || suggestions.length === 0) {
-    ui.suggestionList.innerHTML = emptyStateHtml("No compliant suggestions yet.");
+    ui.suggestionList.innerHTML = emptyStateHtml("No assistant suggestions yet.");
     if (ui.cptBadge) ui.cptBadge.textContent = "0 codes";
     return;
   }
@@ -657,8 +749,9 @@ const renderSuggestions = (suggestions) => {
         <div class="cpt-code">${escapeHtml(item.code)}</div>
         <div class="cpt-amount">${amount}</div>
       </div>
-      <div class="cpt-desc"><strong>${escapeHtml(item.title || "CPT/HCPCS suggestion")}</strong></div>
+      <div class="cpt-desc"><strong>${escapeHtml(item.title || "Assistant suggestion")}</strong></div>
       <div class="cpt-desc">${escapeHtml(item.rationale || "No rationale.")}</div>
+      <div class="cpt-desc"><strong>MDM:</strong> ${escapeHtml(item.mdmJustification || "MDM support not yet provided.")}</div>
       <div class="cpt-desc">Doc: ${escapeHtml(item.documentationNeeded || "Document medical necessity.")}</div>
       ${
         evidenceRefs.length
@@ -683,10 +776,14 @@ const renderSuggestions = (suggestions) => {
 };
 
 const renderRevenueTracker = (tracker) => {
-  const baseline = Number(tracker?.baseline || 0);
-  const opportunity = Number(tracker?.compliantOpportunity || 0);
+  const baseline = Number(tracker?.currentCodesRevenue ?? tracker?.baseline ?? 0);
+  const opportunity = Number(
+    tracker?.suggestedCodesRevenue ?? tracker?.compliantOpportunity ?? 0
+  );
   const earnedNow = Number(tracker?.earnedNow ?? tracker?.projectedTotal ?? 0);
-  const projected = Number(tracker?.projectedTotal || 0);
+  const projected = Number(
+    tracker?.projectedRevenueWithSuggestions ?? tracker?.projectedTotal ?? earnedNow
+  );
   const payerMultiplier = Number(tracker?.payerMultiplier || 1);
 
   ui.baselineRevenue.textContent = `$${safeNumber(baseline)}`;
@@ -697,12 +794,14 @@ const renderRevenueTracker = (tracker) => {
 
   if (ui.oppChange) {
     ui.oppChange.textContent =
-      opportunity > 0 ? `+${safeNumber(opportunity)} compliant opportunity` : "No added opportunity yet";
+      opportunity > 0
+        ? `+${safeNumber(opportunity)} possible from suggested codes`
+        : "No added suggested-code opportunity yet";
   }
 
   if (ui.earnedChange) {
     const codeCount = Array.isArray(tracker?.billableCodes) ? tracker.billableCodes.length : 0;
-    ui.earnedChange.textContent = `${codeCount} billable code${codeCount === 1 ? "" : "s"} selected`;
+    ui.earnedChange.textContent = `${codeCount} suggested code${codeCount === 1 ? "" : "s"} with evidence`;
   }
 };
 
@@ -745,7 +844,7 @@ const renderGuidance = (guidanceItems) => {
 const renderBillableCodes = (codes) => {
   ui.billableCodesList.innerHTML = "";
   if (!Array.isArray(codes) || codes.length === 0) {
-    ui.billableCodesList.innerHTML = emptyStateHtml("No billable codes detected yet.");
+    ui.billableCodesList.innerHTML = emptyStateHtml("No suggested codes detected yet.");
     if (ui.billableCount) ui.billableCount.textContent = "0 items";
     return;
   }
@@ -768,9 +867,12 @@ const renderBillableCodes = (codes) => {
     `;
 
     bindEvidenceTrigger(row, {
-      title: `${code.code} billable code`,
+      title: `${code.code} suggested code`,
       subtitle:
-        code.rationale || code.evidence || "This code is currently selected based on transcript evidence.",
+        code.mdmJustification ||
+        code.rationale ||
+        code.evidence ||
+        "This code is currently selected based on transcript evidence.",
       refs: code.evidenceRefs || [],
       evidenceKey,
     });
@@ -794,7 +896,7 @@ const getNoteContentFromUi = () => ({
     assessment: getEditableText(ui.noteAssessmentEditor),
     plan: getEditableText(ui.notePlanEditor),
   },
-  additionalProviderNotes: String(ui.noteAdditionalProvider?.value || "").trim(),
+  additionalProviderNotes: "",
   freeTextAdditions: String(ui.noteFreeText?.value || "").trim(),
 });
 
@@ -804,11 +906,12 @@ const setNoteContentToUi = (content = {}) => {
   setEditableText(ui.noteExamEditor, content?.sections?.exam || "");
   setEditableText(ui.noteAssessmentEditor, content?.sections?.assessment || "");
   setEditableText(ui.notePlanEditor, content?.sections?.plan || "");
-  if (ui.noteAdditionalProvider) {
-    ui.noteAdditionalProvider.value = String(content?.additionalProviderNotes || "").trim();
-  }
   if (ui.noteFreeText) {
-    ui.noteFreeText.value = String(content?.freeTextAdditions || "").trim();
+    const merged = [content?.additionalProviderNotes, content?.freeTextAdditions]
+      .map((item) => String(item || "").trim())
+      .filter(Boolean)
+      .join("\n\n");
+    ui.noteFreeText.value = merged;
   }
 };
 
@@ -819,7 +922,6 @@ const setNoteLockState = (locked) => {
     item.setAttribute("contenteditable", locked ? "false" : "true");
     item.style.background = locked ? "#f1f5f9" : "";
   }
-  if (ui.noteAdditionalProvider) ui.noteAdditionalProvider.disabled = Boolean(locked);
   if (ui.noteFreeText) ui.noteFreeText.disabled = Boolean(locked);
   if (ui.saveNoteDraftBtn) ui.saveNoteDraftBtn.disabled = Boolean(locked);
   if (ui.recalculateNoteBtn) ui.recalculateNoteBtn.disabled = Boolean(locked);
@@ -837,7 +939,7 @@ const renderNoteVersions = (versions = []) => {
 const renderNoteCoding = (analysis) => {
   state.noteEditor.codingAnalysis = analysis || null;
   if (!analysis) {
-    renderSimplePills(ui.noteCptList, [], "No CPT suggestions");
+    renderSimplePills(ui.noteCptList, [], "No assistant suggestions");
     renderSimplePills(ui.noteIcdList, [], "No ICD suggestions");
     renderSimplePills(ui.noteMissingPrompts, [], "No prompts");
     if (ui.noteJustificationText) ui.noteJustificationText.textContent = "No current coding justification.";
@@ -850,26 +952,23 @@ const renderNoteCoding = (analysis) => {
     ? analysis.documentationImprovements
     : [];
 
-  renderSimplePills(
-    ui.noteCptList,
-    cptCodes.map(
-      (item) =>
-        `${item.code} (${Math.round((item.confidence || 0) * 100)}%) • refs ${
-          Array.isArray(item.evidenceRefs) ? item.evidenceRefs.length : 0
-        }`
-    ),
-    "No CPT suggestions"
-  );
-  renderSimplePills(
-    ui.noteIcdList,
-    icdCodes.map(
-      (item) =>
-        `${item.code} (${Math.round((item.confidence || 0) * 100)}%) • refs ${
-          Array.isArray(item.evidenceRefs) ? item.evidenceRefs.length : 0
-        }`
-    ),
-    "No ICD suggestions"
-  );
+  renderCodePillsWithEvidence({
+    container: ui.noteCptList,
+    items: cptCodes,
+    emptyText: "No assistant suggestions",
+    keyPrefix: "note-cpt",
+    subtitleBuilder: (item) =>
+      item.mdmJustification ||
+      item.rationale ||
+      "Suggested code linked to transcript evidence and note context.",
+  });
+  renderCodePillsWithEvidence({
+    container: ui.noteIcdList,
+    items: icdCodes,
+    emptyText: "No ICD suggestions",
+    keyPrefix: "note-icd",
+    subtitleBuilder: (item) => item.rationale || item.evidence || "Suggested diagnosis evidence",
+  });
   renderSimplePills(
     ui.noteMissingPrompts,
     prompts.map((item) => item.text || item.prompt),
@@ -1186,18 +1285,41 @@ const loadBillingQueue = async () => {
 const loadBillingFinalNote = async (appointmentId) => {
   const payload = await api(`/api/billing/appointments/${encodeURIComponent(appointmentId)}/final`);
   const sections = payload?.finalVersion?.contentJson?.sections || {};
+  const providerAdditions = String(payload?.finalVersion?.contentJson?.freeTextAdditions || "").trim();
   const preview = [
     `HPI: ${sections.hpi || "-"}`,
     `ROS: ${sections.ros || "-"}`,
     `Exam: ${sections.exam || "-"}`,
     `Assessment: ${sections.assessment || "-"}`,
     `Plan: ${sections.plan || "-"}`,
+    providerAdditions ? `Provider Additions: ${providerAdditions}` : "",
   ].join("\n\n");
 
   if (ui.billingFinalNotePreview) {
     ui.billingFinalNotePreview.textContent = preview;
   }
   renderSimplePills(ui.billingApprovedCodes, payload.approvedCodes || [], "No approved codes.");
+  const transcriptPreview = Array.isArray(payload?.transcriptSegments)
+    ? payload.transcriptSegments
+        .slice(-8)
+        .map((segment) => `[${segment.sequence || "-"}] ${segment.cleanedText || ""}`)
+        .join("\n")
+    : "";
+  if (ui.billingTranscriptPreview) {
+    ui.billingTranscriptPreview.textContent = transcriptPreview || "No transcript excerpts loaded.";
+  }
+  renderCodePillsWithEvidence({
+    container: ui.billingCodeEvidence,
+    items: Array.isArray(payload?.codeEvidence) ? payload.codeEvidence : [],
+    emptyText: "No code evidence loaded.",
+    keyPrefix: "billing-code",
+    subtitleBuilder: (item) =>
+      [item.mdmJustification, item.rationale, item.evidence].filter(Boolean).join(" | "),
+    labelBuilder: (item) => {
+      const amount = Number(item?.estimatedAmount || 0) > 0 ? ` $${safeNumber(item.estimatedAmount)}` : "";
+      return `${String(item?.code || "").toUpperCase()}${amount}`;
+    },
+  });
   state.billing.selectedAppointmentId = appointmentId;
 };
 
@@ -1246,6 +1368,35 @@ const loadPastEncounters = async () => {
   const payload = await api(`/api/appointments${suffix}`);
   renderPastEncounters(payload.appointments || []);
   state.loadedViewData.past = true;
+};
+
+const renderPatientChartOptions = (patients = []) => {
+  if (!ui.patientChartOptions) return;
+  ui.patientChartOptions.innerHTML = Array.isArray(patients)
+    ? patients
+        .map((patient) => {
+          const label = [patient.patientRef, patient.externalChartId, patient.fullName]
+            .filter(Boolean)
+            .join(" - ");
+          return `<option value="${escapeHtml(patient.patientRef || "")}" label="${escapeHtml(label)}"></option>`;
+        })
+        .join("")
+    : "";
+};
+
+const lookupPatientCharts = async ({ query = "", silent = false } = {}) => {
+  if (!["provider", "admin"].includes(state.auth.user?.role || "")) return [];
+  const params = new URLSearchParams();
+  const q = String(query || "").trim();
+  if (q) params.set("q", q);
+  params.set("limit", "15");
+  const payload = await api(`/api/patient-charts/search?${params.toString()}`);
+  const patients = Array.isArray(payload?.patients) ? payload.patients : [];
+  renderPatientChartOptions(patients);
+  if (!silent) {
+    addLog(`Loaded ${patients.length} patient chart match${patients.length === 1 ? "" : "es"}.`, "info");
+  }
+  return patients;
 };
 
 const renderRevenueReport = (report) => {
@@ -1476,6 +1627,48 @@ const renderSimplePills = (container, values, emptyText = "No items") => {
     return;
   }
   container.innerHTML = values.map((value) => `<span class="pill">${escapeHtml(value)}</span>`).join("");
+};
+
+const renderCodePillsWithEvidence = ({
+  container,
+  items = [],
+  emptyText = "No items",
+  keyPrefix = "code",
+  subtitleBuilder = null,
+  labelBuilder = null,
+}) => {
+  if (!container) return;
+  container.innerHTML = "";
+
+  if (!Array.isArray(items) || !items.length) {
+    container.innerHTML = `<span class="pill">${escapeHtml(emptyText)}</span>`;
+    return;
+  }
+
+  for (const item of items) {
+    const refs = Array.isArray(item?.evidenceRefs) ? item.evidenceRefs : [];
+    const code = String(item?.code || "").toUpperCase().trim();
+    const confidence = Math.round(Number(item?.confidence || 0) * 100);
+    const label = labelBuilder
+      ? labelBuilder(item)
+      : `${code || "CODE"} (${confidence}%) refs ${refs.length}`;
+    const chip = document.createElement("span");
+    chip.className = "pill";
+    chip.textContent = label;
+
+    bindEvidenceTrigger(chip, {
+      title: `${code || "Code"} evidence`,
+      subtitle:
+        (typeof subtitleBuilder === "function"
+          ? subtitleBuilder(item)
+          : item?.mdmJustification || item?.rationale || item?.evidence || "") ||
+        "Supporting transcript evidence",
+      refs,
+      evidenceKey: getEvidenceKey(keyPrefix, item),
+    });
+
+    container.appendChild(chip);
+  }
 };
 
 const renderHipaaSettings = (payload) => {
@@ -2012,8 +2205,10 @@ const summarizeAssistantUpdate = ({
     ? `Documentation gaps: ${documentationGaps.length}`
     : "Documentation gaps: none major.";
 
-  const revenuePart = `Estimated earned now: $${safeNumber(
-    tracker?.earnedNow ?? tracker?.projectedTotal
+  const currentRevenue = tracker?.currentCodesRevenue ?? tracker?.baseline ?? 0;
+  const suggestedRevenue = tracker?.suggestedCodesRevenue ?? tracker?.compliantOpportunity ?? 0;
+  const revenuePart = `Current codes: $${safeNumber(currentRevenue)}. Suggested potential: $${safeNumber(
+    suggestedRevenue
   )}`;
 
   return `${prefix}: ${codePart} ${guidancePart} ${missedPart} ${gapPart} ${revenuePart}`;
@@ -2311,8 +2506,8 @@ const resetEncounterPanels = () => {
   );
   ui.chatFeed.innerHTML = emptyStateHtml("Assistant analysis will appear here");
   ui.guidanceList.innerHTML = emptyStateHtml("Compliance prompts will appear here");
-  ui.suggestionList.innerHTML = emptyStateHtml("CPT codes surface as encounter progresses");
-  ui.billableCodesList.innerHTML = emptyStateHtml("No codes logged yet");
+  ui.suggestionList.innerHTML = emptyStateHtml("Assistant code suggestions surface as encounter progresses");
+  ui.billableCodesList.innerHTML = emptyStateHtml("No suggested codes logged yet");
 
   if (ui.cptBadge) ui.cptBadge.textContent = "0 codes";
   if (ui.billableCount) ui.billableCount.textContent = "0 items";
@@ -2335,9 +2530,15 @@ const startEncounter = async () => {
     return;
   }
 
-  const doctorRef = ui.doctorRef.value.trim();
+  const doctorRef = String(state.auth.user?.username || ui.doctorRef.value || "").trim();
+  if (ui.doctorRef) ui.doctorRef.value = doctorRef;
   const patientRef = ui.patientRef.value.trim() || "anonymous";
   const consentFormId = ui.consentFormId.value.trim();
+  const encounterMode = String(ui.encounterMode?.value || "in-person").trim().toLowerCase();
+  const telehealthPlatform =
+    encounterMode === "telehealth"
+      ? String(ui.telehealthPlatform?.value || "generic").trim().toLowerCase()
+      : "";
 
   if (!doctorRef) {
     alert("Doctor reference is required.");
@@ -2358,6 +2559,8 @@ const startEncounter = async () => {
       consentSignedAt: new Date().toISOString(),
       insurancePlan: ui.insurancePlan.value,
       visitType: ui.visitType.value,
+      encounterMode,
+      telehealthPlatform,
       consentGiven: true,
     }),
   });
@@ -2378,13 +2581,19 @@ const startEncounter = async () => {
   renderRevenueTracker({
     baseline: 0,
     compliantOpportunity: 0,
+    currentCodesRevenue: 0,
+    suggestedCodesRevenue: 0,
     earnedNow: 0,
     projectedTotal: 0,
+    projectedRevenueWithSuggestions: 0,
     payerMultiplier: 1,
     billableCodes: [],
   });
 
-  addLog(`Doctor ${doctorRef} started appointment ${state.appointment.id}.`, "good");
+  addLog(
+    `Doctor ${doctorRef} started ${encounterMode}${telehealthPlatform ? ` (${telehealthPlatform})` : ""} appointment ${state.appointment.id}.`,
+    "good"
+  );
   setSessionUiState({
     active: true,
     text: ui.sessionBadge ? `Live: ${state.appointment.id}` : "Session Live",
@@ -2613,29 +2822,100 @@ const handlePasswordAuth = async () => {
 
   const payload = await api("/api/auth/login", {
     method: "POST",
-    body: JSON.stringify({ username, password }),
+    body: JSON.stringify({
+      username,
+      password,
+      clientId: state.clientLandingId || undefined,
+    }),
   });
 
   state.auth.challengeId = payload.challengeId || "";
+  state.auth.availableFactors = Array.isArray(payload.availableFactors) && payload.availableFactors.length
+    ? payload.availableFactors
+    : ["totp"];
+  state.auth.preferredFactor = String(payload.preferredFactor || "totp").toLowerCase();
   if (!state.auth.challengeId) {
     throw new Error("Missing 2FA challenge from server.");
   }
 
   if (ui.auth2faBlock) ui.auth2faBlock.style.display = "block";
+  if (ui.authFactorMethod) {
+    const available = state.auth.availableFactors;
+    const selected = available.includes(state.auth.preferredFactor)
+      ? state.auth.preferredFactor
+      : available[0] || "totp";
+    ui.authFactorMethod.innerHTML = available
+      .map((method) => {
+        if (method === "sms") return '<option value="sms">Text Message (SMS)</option>';
+        return '<option value="totp">Authenticator App</option>';
+      })
+      .join("");
+    ui.authFactorMethod.value = selected;
+  }
+  if (ui.authSendSmsBtn) {
+    ui.authSendSmsBtn.disabled = !state.auth.availableFactors.includes("sms");
+  }
   if (ui.authSetupHint) {
-    ui.authSetupHint.textContent = payload.mfaSetupRequired
-      ? "Scan this secret in your authenticator app, then enter the 6-digit code."
-      : "Enter your 6-digit authenticator code.";
+    const selectedFactor = String(ui.authFactorMethod?.value || state.auth.preferredFactor || "totp")
+      .toLowerCase();
+    ui.authSetupHint.textContent =
+      selectedFactor === "sms"
+        ? "Request a text code, then enter the 6-digit SMS code."
+        : payload.mfaSetupRequired
+          ? "Scan this secret in your authenticator app, then enter the 6-digit code."
+          : "Enter your 6-digit authenticator code.";
   }
   if (ui.authSetupSecret) {
     ui.authSetupSecret.textContent = payload.setup?.secret
       ? `Setup secret: ${payload.setup.secret}`
       : "";
   }
+  if (ui.authSetupQr) {
+    if (payload.setup?.qrImageUrl) {
+      ui.authSetupQr.src = payload.setup.qrImageUrl;
+      ui.authSetupQr.style.display = "block";
+    } else {
+      ui.authSetupQr.removeAttribute("src");
+      ui.authSetupQr.style.display = "none";
+    }
+  }
+  if (ui.authSmsHint) {
+    ui.authSmsHint.textContent = "";
+  }
+  if (ui.authFactorMethod?.value === "sms") {
+    await sendSms2faCode().catch(() => {});
+  }
   setAuthError("");
 };
 
+const sendSms2faCode = async () => {
+  if (!state.auth.challengeId) {
+    setAuthError("Start login first to request a text code.");
+    return;
+  }
+  if (!state.auth.availableFactors.includes("sms")) {
+    setAuthError("SMS factor is not enabled for this account.");
+    return;
+  }
+  const payload = await api("/api/auth/2fa/sms/send", {
+    method: "POST",
+    body: JSON.stringify({
+      challengeId: state.auth.challengeId,
+    }),
+  });
+  if (ui.authSmsHint) {
+    const devPart = payload.devCode ? ` (dev code: ${payload.devCode})` : "";
+    ui.authSmsHint.textContent = `Text code sent to ${payload.destination || "your phone"}${devPart}`;
+  }
+  if (ui.authFactorMethod && state.auth.availableFactors.includes("sms")) {
+    ui.authFactorMethod.value = "sms";
+  }
+};
+
 const handle2faAuth = async () => {
+  const method = String(ui.authFactorMethod?.value || state.auth.preferredFactor || "totp")
+    .trim()
+    .toLowerCase();
   const code = String(ui.authTotpCode?.value || "").trim();
   if (!state.auth.challengeId || !code) {
     setAuthError("Enter the 2FA code to continue.");
@@ -2647,6 +2927,7 @@ const handle2faAuth = async () => {
     body: JSON.stringify({
       challengeId: state.auth.challengeId,
       code,
+      method,
     }),
   });
 
@@ -2657,8 +2938,14 @@ const handle2faAuth = async () => {
   if (ui.authTotpCode) ui.authTotpCode.value = "";
   if (ui.auth2faBlock) ui.auth2faBlock.style.display = "none";
   if (ui.authSetupSecret) ui.authSetupSecret.textContent = "";
+  if (ui.authSetupQr) {
+    ui.authSetupQr.removeAttribute("src");
+    ui.authSetupQr.style.display = "none";
+  }
+  if (ui.authSmsHint) ui.authSmsHint.textContent = "";
   setAuthOverlayOpen(false);
   setAuthUserUi();
+  applyUserContextToEncounterForm();
   applyRoleViewAccess();
   resetLoadedViews();
   initializeViews();
@@ -2673,6 +2960,7 @@ const loadSessionUser = async () => {
     const payload = await api("/api/auth/me");
     state.auth.user = payload.user || null;
     setAuthUserUi();
+    applyUserContextToEncounterForm();
     applyRoleViewAccess();
     return Boolean(state.auth.user);
   } catch {
@@ -2725,7 +3013,6 @@ const bindNoteEditor = () => {
     ui.noteExamEditor,
     ui.noteAssessmentEditor,
     ui.notePlanEditor,
-    ui.noteAdditionalProvider,
     ui.noteFreeText,
   ];
 
@@ -2756,7 +3043,7 @@ const initializeViews = () => {
   }
 
   if (ui.prefDoctorRef && !ui.prefDoctorRef.value.trim()) {
-    ui.prefDoctorRef.value = prefs.doctorRef || "default";
+    ui.prefDoctorRef.value = state.auth.user?.username || prefs.doctorRef || "default";
   }
 
   const doctorRef = String(ui.prefDoctorRef?.value || "default").trim() || "default";
@@ -2798,11 +3085,33 @@ document.addEventListener("keydown", (event) => {
 });
 
 ui.consentGiven?.addEventListener("change", setConsentBadgeState);
+ui.encounterMode?.addEventListener("change", syncEncounterModeUi);
+ui.patientLookupBtn?.addEventListener("click", () => {
+  lookupPatientCharts({ query: ui.patientRef?.value || "" }).catch((error) =>
+    addLog(`Patient chart lookup failed: ${error.message}`, "warn")
+  );
+});
+ui.patientRef?.addEventListener("input", () => {
+  const query = String(ui.patientRef.value || "").trim();
+  if (query.length < 2) return;
+  lookupPatientCharts({ query, silent: true }).catch(() => {});
+});
 ui.authPasswordBtn?.addEventListener("click", () => {
   handlePasswordAuth().catch((error) => setAuthError(error.message || "Login failed."));
 });
 ui.auth2faBtn?.addEventListener("click", () => {
   handle2faAuth().catch((error) => setAuthError(error.message || "2FA failed."));
+});
+ui.authSendSmsBtn?.addEventListener("click", () => {
+  sendSms2faCode().catch((error) => setAuthError(error.message || "Unable to send SMS code."));
+});
+ui.authFactorMethod?.addEventListener("change", () => {
+  if (!ui.authSetupHint) return;
+  const selected = String(ui.authFactorMethod?.value || "totp").toLowerCase();
+  ui.authSetupHint.textContent =
+    selected === "sms"
+      ? "Request a text code, then enter the 6-digit SMS code."
+      : "Enter your 6-digit authenticator code.";
 });
 ui.logoutBtn?.addEventListener("click", () => {
   logout().catch((error) => addLog(`Logout failed: ${error.message}`, "warn"));
@@ -2819,6 +3128,8 @@ ui.authTotpCode?.addEventListener("keydown", (event) => {
 });
 
 setConsentBadgeState();
+syncEncounterModeUi();
+applyClientLandingContext();
 setTranscriptBadge("Idle", false);
 bindNavigation();
 bindPreferences();
@@ -2840,3 +3151,4 @@ loadSessionUser()
   .catch(() => {
     setAuthOverlayOpen(true);
   });
+

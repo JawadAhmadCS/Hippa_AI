@@ -2,24 +2,26 @@
 
 HIPAA-first medical AI assistant prototype for live doctor-patient encounters.
 
-## Access Model (Doctor-Only)
+## Access Model (Clinic-Scoped)
 
-- Doctor has full access to recordings, transcripts, suggestions, and coding output.
+- Clinic-scoped login routes (`/c/:clinicId`) are supported for client-specific portals.
+- Doctor has full access to recordings, transcripts, assistant suggestions, and coding output.
 - Patient has no portal access in this prototype.
 - Patient action is only intake consent signing before recording starts.
-- Encounter creation now requires `doctorRef`, `consentFormId`, and `consentGiven=true`.
+- Encounter creation now auto-fills `doctorRef` from login and requires `consentFormId` + `consentGiven=true`.
 
 ## Core Features
 
 - Live speech-to-text transcription (Azure Speech token flow + browser fallback)
 - AWS Transcribe Medical transcript event ingestion (backend endpoint)
+- Generic telehealth transcript ingestion endpoint (Zoom, Teams, Meet, Webex, custom)
 - Transcript cleanup for noisy ASR lines before analysis
 - Live doctor guidance prompts for what to ask next during appointment
 - ICD-10 suggestion, documentation gap detection, and missed billable component alerts
 - E/M guardrail: baseline code is not double-counted in compliant opportunity revenue
 - Transcript analysis with OpenAI text models (no WebRTC realtime dependency)
-- Compliant CPT/HCPCS opportunity suggestions
-- Revenue projection with insurance multiplier + Medicare fallback, including current billable code breakdown
+- Compliant assistant suggestions with transcript evidence + MDM justifications
+- Revenue projection split by current coded revenue vs suggested-code opportunity
 - Audio recording storage (Azure Blob + local fallback)
 - SSE streaming channel for real-time backend analysis updates
 - Production readiness tracker for BAAs, security hardening, and legal/compliance approvals
@@ -123,8 +125,10 @@ Also used:
 - `GET /api/azure/speech-token` Azure speech token for live transcription
 - `POST /api/appointments/:id/transcript` ingest transcript + cleanup + coding + doctor guidance + live revenue/code breakdown
 - `POST /api/appointments/:id/transcript/aws-transcribe` ingest AWS Transcribe Medical `TranscriptEvent` payloads
+- `POST /api/appointments/:id/transcript/telehealth` ingest telehealth transcript payloads (Zoom/Teams/Meet/Webex/custom)
 - `GET /api/appointments/:id/stream` SSE live events (`transcript.accepted`, `analysis.update`, `transcript.partial`)
 - `POST /api/appointments/:id/audio` upload encounter audio
+- `GET /api/patient-charts/search?q=` pull patient IDs from chart records
 - `GET /api/compliance/status` integration, access model, and codebook freshness
 - `GET /api/production/readiness` checklist status for BAAs, legal/compliance review, and security controls
 - `PUT /api/production/readiness` update rollout approvals and hardening state
