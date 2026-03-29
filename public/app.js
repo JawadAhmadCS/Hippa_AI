@@ -42,6 +42,10 @@ const state = {
     queue: [],
     selectedAppointmentId: "",
   },
+  security2fa: {
+    settings: null,
+    setup: null,
+  },
   selectedPastEncounterId: "",
   reportFilters: {
     granularity: "daily",
@@ -117,7 +121,9 @@ const ui = {
   noteExamEditor: document.getElementById("noteExamEditor"),
   noteAssessmentEditor: document.getElementById("noteAssessmentEditor"),
   notePlanEditor: document.getElementById("notePlanEditor"),
+  noteManualNotes: document.getElementById("noteManualNotes"),
   noteFreeText: document.getElementById("noteFreeText"),
+  noteMergeStatus: document.getElementById("noteMergeStatus"),
   recalculateNoteBtn: document.getElementById("recalculateNoteBtn"),
   saveNoteDraftBtn: document.getElementById("saveNoteDraftBtn"),
   finalizeNoteBtn: document.getElementById("finalizeNoteBtn"),
@@ -147,8 +153,11 @@ const ui = {
   billingQueueSummary: document.getElementById("billingQueueSummary"),
   refreshBillingQueueBtn: document.getElementById("refreshBillingQueueBtn"),
   billingQueueBody: document.getElementById("billingQueueBody"),
+  billingExpectedRevenue: document.getElementById("billingExpectedRevenue"),
   billingFinalNotePreview: document.getElementById("billingFinalNotePreview"),
   billingTranscriptPreview: document.getElementById("billingTranscriptPreview"),
+  billingRecommendedCpt: document.getElementById("billingRecommendedCpt"),
+  billingRecommendedIcd: document.getElementById("billingRecommendedIcd"),
   billingApprovedCodes: document.getElementById("billingApprovedCodes"),
   billingCodeEvidence: document.getElementById("billingCodeEvidence"),
   pastAuditSummary: document.getElementById("pastAuditSummary"),
@@ -180,6 +189,17 @@ const ui = {
   settingsEmailAlerts: document.getElementById("settingsEmailAlerts"),
   saveSettingsBtn: document.getElementById("saveSettingsBtn"),
   settingsSavedAt: document.getElementById("settingsSavedAt"),
+  settings2faStatus: document.getElementById("settings2faStatus"),
+  settings2faEnabled: document.getElementById("settings2faEnabled"),
+  settings2faSmsEnabled: document.getElementById("settings2faSmsEnabled"),
+  save2faSettingsBtn: document.getElementById("save2faSettingsBtn"),
+  settings2faSavedAt: document.getElementById("settings2faSavedAt"),
+  settings2faSetupHint: document.getElementById("settings2faSetupHint"),
+  settings2faSetupBtn: document.getElementById("settings2faSetupBtn"),
+  settings2faSetupSecret: document.getElementById("settings2faSetupSecret"),
+  settings2faSetupQr: document.getElementById("settings2faSetupQr"),
+  settings2faSetupCode: document.getElementById("settings2faSetupCode"),
+  settings2faVerifyBtn: document.getElementById("settings2faVerifyBtn"),
   jumpViewButtons: Array.from(document.querySelectorAll("[data-jump-view]")),
   prefDoctorRef: document.getElementById("prefDoctorRef"),
   prefDefaultView: document.getElementById("prefDefaultView"),
@@ -888,6 +908,21 @@ const setEditableText = (element, value) => {
   element.textContent = String(value || "").trim();
 };
 
+const MANUAL_NOTE_MERGE_MARKER = "Manual Notes:";
+
+const syncMergedNoteFromManual = () => {
+  if (!ui.noteManualNotes || !ui.noteFreeText) return;
+  const manual = String(ui.noteManualNotes.value || "").trim();
+  const merged = String(ui.noteFreeText.value || "").trim();
+  const markerRegex = /\n{0,2}Manual Notes:\n[\s\S]*$/i;
+  const base = merged.replace(markerRegex, "").trim();
+  if (!manual) {
+    ui.noteFreeText.value = base;
+    return;
+  }
+  ui.noteFreeText.value = `${base ? `${base}\n\n` : ""}${MANUAL_NOTE_MERGE_MARKER}\n${manual}`;
+};
+
 const getNoteContentFromUi = () => ({
   sections: {
     hpi: getEditableText(ui.noteHpiEditor),
@@ -896,7 +931,7 @@ const getNoteContentFromUi = () => ({
     assessment: getEditableText(ui.noteAssessmentEditor),
     plan: getEditableText(ui.notePlanEditor),
   },
-  additionalProviderNotes: "",
+  additionalProviderNotes: String(ui.noteManualNotes?.value || "").trim(),
   freeTextAdditions: String(ui.noteFreeText?.value || "").trim(),
 });
 
@@ -906,13 +941,27 @@ const setNoteContentToUi = (content = {}) => {
   setEditableText(ui.noteExamEditor, content?.sections?.exam || "");
   setEditableText(ui.noteAssessmentEditor, content?.sections?.assessment || "");
   setEditableText(ui.notePlanEditor, content?.sections?.plan || "");
-  if (ui.noteFreeText) {
-    const merged = [content?.additionalProviderNotes, content?.freeTextAdditions]
-      .map((item) => String(item || "").trim())
-      .filter(Boolean)
-      .join("\n\n");
-    ui.noteFreeText.value = merged;
+  if (ui.noteManualNotes) {
+    ui.noteManualNotes.value = String(content?.additionalProviderNotes || "").trim();
   }
+  if (ui.noteFreeText) {
+    ui.noteFreeText.value = String(content?.freeTextAdditions || "").trim();
+  }
+  updateNoteMergeStatus();
+};
+
+const updateNoteMergeStatus = () => {
+  if (!ui.noteMergeStatus) return;
+  const manual = String(ui.noteManualNotes?.value || "").trim();
+  const merged = String(ui.noteFreeText?.value || "").trim();
+  if (!manual && !merged) {
+    ui.noteMergeStatus.textContent =
+      "Manual notes are merged with AI chart notes for final provider confirmation.";
+    return;
+  }
+  const manualLines = manual ? manual.split(/\r?\n/).filter((line) => line.trim()).length : 0;
+  const mergedLines = merged ? merged.split(/\r?\n/).filter((line) => line.trim()).length : 0;
+  ui.noteMergeStatus.textContent = `Manual lines: ${manualLines} | Merged note lines: ${mergedLines}`;
 };
 
 const setNoteLockState = (locked) => {
@@ -923,6 +972,7 @@ const setNoteLockState = (locked) => {
     item.style.background = locked ? "#f1f5f9" : "";
   }
   if (ui.noteFreeText) ui.noteFreeText.disabled = Boolean(locked);
+  if (ui.noteManualNotes) ui.noteManualNotes.disabled = Boolean(locked);
   if (ui.saveNoteDraftBtn) ui.saveNoteDraftBtn.disabled = Boolean(locked);
   if (ui.recalculateNoteBtn) ui.recalculateNoteBtn.disabled = Boolean(locked);
   if (ui.finalizeNoteBtn) ui.finalizeNoteBtn.disabled = Boolean(locked);
@@ -1249,6 +1299,7 @@ const renderBillingQueue = (queue = []) => {
       <tr>
         <td><div class="table-code-pill">${escapeHtml(item.appointmentId || "-")}</div></td>
         <td>${escapeHtml(formatDateTime(item.finalizedAt))}</td>
+        <td>${escapeHtml(formatCurrency(item.expectedRevenueFromAppointment || 0))}</td>
         <td>${escapeHtml((item.approvedCodes || []).join(", ") || "-")}</td>
         <td>${escapeHtml(`${Math.round(Number(item.confidence || 0) * 100)}%`)}</td>
         <td><button class="btn btn-ghost" type="button" data-billing-open="${escapeHtml(
@@ -1258,7 +1309,7 @@ const renderBillingQueue = (queue = []) => {
     )
     .join("");
 
-  renderTableBody(ui.billingQueueBody, rowsHtml, 5, "No finalized notes available.");
+  renderTableBody(ui.billingQueueBody, rowsHtml, 6, "No finalized notes available.");
   if (ui.billingQueueSummary) {
     ui.billingQueueSummary.textContent = `${state.billing.queue.length} finalized encounter${
       state.billing.queue.length === 1 ? "" : "s"
@@ -1285,6 +1336,7 @@ const loadBillingQueue = async () => {
 const loadBillingFinalNote = async (appointmentId) => {
   const payload = await api(`/api/billing/appointments/${encodeURIComponent(appointmentId)}/final`);
   const sections = payload?.finalVersion?.contentJson?.sections || {};
+  const manualNotes = String(payload?.finalVersion?.contentJson?.additionalProviderNotes || "").trim();
   const providerAdditions = String(payload?.finalVersion?.contentJson?.freeTextAdditions || "").trim();
   const preview = [
     `HPI: ${sections.hpi || "-"}`,
@@ -1292,12 +1344,37 @@ const loadBillingFinalNote = async (appointmentId) => {
     `Exam: ${sections.exam || "-"}`,
     `Assessment: ${sections.assessment || "-"}`,
     `Plan: ${sections.plan || "-"}`,
+    manualNotes ? `Manual Notes: ${manualNotes}` : "",
     providerAdditions ? `Provider Additions: ${providerAdditions}` : "",
   ].join("\n\n");
 
+  if (ui.billingExpectedRevenue) {
+    ui.billingExpectedRevenue.textContent = formatCurrency(payload?.expectedRevenueFromAppointment || 0);
+  }
   if (ui.billingFinalNotePreview) {
     ui.billingFinalNotePreview.textContent = preview;
   }
+  renderCodePillsWithEvidence({
+    container: ui.billingRecommendedCpt,
+    items: Array.isArray(payload?.recommendedCptCodes) ? payload.recommendedCptCodes : [],
+    emptyText: "No CPT recommendations loaded.",
+    keyPrefix: "billing-cpt",
+    subtitleBuilder: (item) =>
+      item.mdmJustification ||
+      item.rationale ||
+      item.evidence ||
+      "Recommended CPT code with supporting transcript/chart-note references.",
+  });
+  renderCodePillsWithEvidence({
+    container: ui.billingRecommendedIcd,
+    items: Array.isArray(payload?.recommendedIcd10Codes) ? payload.recommendedIcd10Codes : [],
+    emptyText: "No ICD-10 recommendations loaded.",
+    keyPrefix: "billing-icd",
+    subtitleBuilder: (item) =>
+      item.rationale ||
+      item.evidence ||
+      "Recommended ICD-10 code with supporting transcript/chart-note references.",
+  });
   renderSimplePills(ui.billingApprovedCodes, payload.approvedCodes || [], "No approved codes.");
   const transcriptPreview = Array.isArray(payload?.transcriptSegments)
     ? payload.transcriptSegments
@@ -1592,10 +1669,11 @@ const renderSettingsSummary = ({ report, compliance, generalSettings, integratio
 };
 
 const loadSettingsSummary = async () => {
-  const [report, compliance, settingsPayload] = await Promise.all([
+  const [report, compliance, settingsPayload, _security] = await Promise.all([
     loadRevenueReport(),
     api("/api/compliance/status"),
     api("/api/settings/general"),
+    load2faSettings(),
   ]);
   populateGeneralSettingsForm(settingsPayload.settings || {});
   renderSettingsSummary({
@@ -1618,6 +1696,138 @@ const saveGeneralSettings = async () => {
   }
   addLog("General settings updated.", "good");
   state.loadedViewData.settings = false;
+};
+
+const render2faSetupArtifacts = (setup) => {
+  const secret = String(setup?.secret || "").trim();
+  if (ui.settings2faSetupSecret) {
+    ui.settings2faSetupSecret.textContent = secret ? `Setup secret: ${secret}` : "";
+  }
+  if (ui.settings2faSetupQr) {
+    if (setup?.qrImageUrl) {
+      ui.settings2faSetupQr.src = setup.qrImageUrl;
+      ui.settings2faSetupQr.style.display = "block";
+    } else {
+      ui.settings2faSetupQr.removeAttribute("src");
+      ui.settings2faSetupQr.style.display = "none";
+    }
+  }
+};
+
+const render2faSettings = (settings = {}) => {
+  state.security2fa.settings = settings || {};
+  const factors = Array.isArray(settings?.availableFactors) ? settings.availableFactors : [];
+  const factorLabel = factors.length
+    ? factors
+        .map((item) => (String(item).toLowerCase() === "sms" ? "SMS" : "Authenticator"))
+        .join(", ")
+    : "None configured";
+
+  if (ui.settings2faEnabled) ui.settings2faEnabled.checked = Boolean(settings?.mfaEnabled);
+  if (ui.settings2faSmsEnabled) ui.settings2faSmsEnabled.checked = Boolean(settings?.sms2faEnabled);
+  if (ui.settings2faStatus) {
+    ui.settings2faStatus.innerHTML = `
+      <div class="kv-row"><span class="kv-key">2FA Required</span><span class="kv-value">${escapeHtml(
+        settings?.mfaEnabled ? "Enabled" : "Disabled"
+      )}</span></div>
+      <div class="kv-row"><span class="kv-key">Authenticator App</span><span class="kv-value">${escapeHtml(
+        settings?.totpEnabled ? "Configured" : "Not configured"
+      )}</span></div>
+      <div class="kv-row"><span class="kv-key">SMS Factor</span><span class="kv-value">${escapeHtml(
+        settings?.sms2faEnabled
+          ? `Enabled${settings?.phoneMasked ? ` (${settings.phoneMasked})` : ""}`
+          : "Disabled"
+      )}</span></div>
+      <div class="kv-row"><span class="kv-key">Available Methods</span><span class="kv-value">${escapeHtml(
+        factorLabel
+      )}</span></div>
+    `;
+  }
+};
+
+const load2faSettings = async () => {
+  const payload = await api("/api/settings/security/2fa");
+  render2faSettings(payload.settings || {});
+  if (payload.user) {
+    state.auth.user = {
+      ...(state.auth.user || {}),
+      ...payload.user,
+    };
+    setAuthUserUi();
+  }
+  return payload;
+};
+
+const save2faSettings = async () => {
+  const payload = await api("/api/settings/security/2fa", {
+    method: "PUT",
+    body: JSON.stringify({
+      mfaEnabled: Boolean(ui.settings2faEnabled?.checked),
+      sms2faEnabled: Boolean(ui.settings2faSmsEnabled?.checked),
+    }),
+  });
+  render2faSettings(payload.settings || {});
+  if (payload.user) {
+    state.auth.user = {
+      ...(state.auth.user || {}),
+      ...payload.user,
+    };
+    setAuthUserUi();
+  }
+  if (ui.settings2faSavedAt) {
+    ui.settings2faSavedAt.textContent = `Saved at ${new Date().toLocaleTimeString()}`;
+  }
+  addLog("2FA settings updated.", "good");
+};
+
+const start2faSetup = async () => {
+  const payload = await api("/api/settings/security/2fa/setup", {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+  state.security2fa.setup = payload.setup || null;
+  render2faSetupArtifacts(state.security2fa.setup);
+  render2faSettings(payload.settings || state.security2fa.settings || {});
+  if (payload.user) {
+    state.auth.user = {
+      ...(state.auth.user || {}),
+      ...payload.user,
+    };
+    setAuthUserUi();
+  }
+  if (ui.settings2faSetupHint) {
+    ui.settings2faSetupHint.textContent =
+      "Scan QR in your authenticator app, enter a 6-digit code, then verify to enable 2FA.";
+  }
+  addLog("Authenticator setup created. Verify code to finish enabling 2FA.", "good");
+};
+
+const verify2faSetup = async () => {
+  const code = String(ui.settings2faSetupCode?.value || "").trim();
+  if (!code) {
+    addLog("Enter a 6-digit authenticator code to verify setup.", "warn");
+    return;
+  }
+  const payload = await api("/api/settings/security/2fa/verify", {
+    method: "POST",
+    body: JSON.stringify({ code }),
+  });
+  render2faSettings(payload.settings || {});
+  if (payload.user) {
+    state.auth.user = {
+      ...(state.auth.user || {}),
+      ...payload.user,
+    };
+    setAuthUserUi();
+  }
+  if (ui.settings2faSetupCode) ui.settings2faSetupCode.value = "";
+  if (ui.settings2faSetupHint) {
+    ui.settings2faSetupHint.textContent = "Authenticator verified. 2FA is now enabled for login.";
+  }
+  if (ui.settings2faSavedAt) {
+    ui.settings2faSavedAt.textContent = `Verified at ${new Date().toLocaleTimeString()}`;
+  }
+  addLog("Authenticator verified and 2FA enabled.", "good");
 };
 
 const renderSimplePills = (container, values, emptyText = "No items") => {
@@ -2714,6 +2924,15 @@ const bindNavigation = () => {
   ui.saveSettingsBtn?.addEventListener("click", () => {
     saveGeneralSettings().catch((error) => addLog(`Settings save failed: ${error.message}`, "warn"));
   });
+  ui.save2faSettingsBtn?.addEventListener("click", () => {
+    save2faSettings().catch((error) => addLog(`2FA settings save failed: ${error.message}`, "warn"));
+  });
+  ui.settings2faSetupBtn?.addEventListener("click", () => {
+    start2faSetup().catch((error) => addLog(`2FA setup failed: ${error.message}`, "warn"));
+  });
+  ui.settings2faVerifyBtn?.addEventListener("click", () => {
+    verify2faSetup().catch((error) => addLog(`2FA verification failed: ${error.message}`, "warn"));
+  });
 
   ui.saveHipaaSettingsBtn?.addEventListener("click", () => {
     saveHipaaPolicySettings().catch((error) => addLog(`HIPAA policy save failed: ${error.message}`, "warn"));
@@ -2812,6 +3031,28 @@ const bindCodebook = () => {
   });
 };
 
+const completeAuthSession = (payload = {}) => {
+  writeAuthToken(payload.token || "");
+  state.auth.user = payload.user || null;
+  state.auth.challengeId = "";
+  if (ui.authPassword) ui.authPassword.value = "";
+  if (ui.authTotpCode) ui.authTotpCode.value = "";
+  if (ui.auth2faBlock) ui.auth2faBlock.style.display = "none";
+  if (ui.authSetupSecret) ui.authSetupSecret.textContent = "";
+  if (ui.authSetupQr) {
+    ui.authSetupQr.removeAttribute("src");
+    ui.authSetupQr.style.display = "none";
+  }
+  if (ui.authSmsHint) ui.authSmsHint.textContent = "";
+  setAuthOverlayOpen(false);
+  setAuthUserUi();
+  applyUserContextToEncounterForm();
+  applyRoleViewAccess();
+  resetLoadedViews();
+  initializeViews();
+  setAuthError("");
+};
+
 const handlePasswordAuth = async () => {
   const username = String(ui.authUsername?.value || "").trim().toLowerCase();
   const password = String(ui.authPassword?.value || "");
@@ -2828,6 +3069,11 @@ const handlePasswordAuth = async () => {
       clientId: state.clientLandingId || undefined,
     }),
   });
+
+  if (payload?.token && payload?.user) {
+    completeAuthSession(payload);
+    return;
+  }
 
   state.auth.challengeId = payload.challengeId || "";
   state.auth.availableFactors = Array.isArray(payload.availableFactors) && payload.availableFactors.length
@@ -2861,9 +3107,7 @@ const handlePasswordAuth = async () => {
     ui.authSetupHint.textContent =
       selectedFactor === "sms"
         ? "Request a text code, then enter the 6-digit SMS code."
-        : payload.mfaSetupRequired
-          ? "Scan this secret in your authenticator app, then enter the 6-digit code."
-          : "Enter your 6-digit authenticator code.";
+        : "Enter your 6-digit authenticator code.";
   }
   if (ui.authSetupSecret) {
     ui.authSetupSecret.textContent = payload.setup?.secret
@@ -2930,26 +3174,7 @@ const handle2faAuth = async () => {
       method,
     }),
   });
-
-  writeAuthToken(payload.token || "");
-  state.auth.user = payload.user || null;
-  state.auth.challengeId = "";
-  if (ui.authPassword) ui.authPassword.value = "";
-  if (ui.authTotpCode) ui.authTotpCode.value = "";
-  if (ui.auth2faBlock) ui.auth2faBlock.style.display = "none";
-  if (ui.authSetupSecret) ui.authSetupSecret.textContent = "";
-  if (ui.authSetupQr) {
-    ui.authSetupQr.removeAttribute("src");
-    ui.authSetupQr.style.display = "none";
-  }
-  if (ui.authSmsHint) ui.authSmsHint.textContent = "";
-  setAuthOverlayOpen(false);
-  setAuthUserUi();
-  applyUserContextToEncounterForm();
-  applyRoleViewAccess();
-  resetLoadedViews();
-  initializeViews();
-  setAuthError("");
+  completeAuthSession(payload);
 };
 
 const loadSessionUser = async () => {
@@ -3013,12 +3238,19 @@ const bindNoteEditor = () => {
     ui.noteExamEditor,
     ui.noteAssessmentEditor,
     ui.notePlanEditor,
+    ui.noteManualNotes,
     ui.noteFreeText,
   ];
 
   for (const input of autosaveInputs) {
     if (!input) continue;
-    input.addEventListener("input", scheduleNoteAutosave);
+    input.addEventListener("input", () => {
+      if (input === ui.noteManualNotes) {
+        syncMergedNoteFromManual();
+      }
+      updateNoteMergeStatus();
+      scheduleNoteAutosave();
+    });
     input.addEventListener("blur", () => {
       if (!state.appointment?.id) return;
       saveNoteDraft({ silent: true }).catch((error) =>
@@ -3126,6 +3358,11 @@ ui.authTotpCode?.addEventListener("keydown", (event) => {
   event.preventDefault();
   handle2faAuth().catch((error) => setAuthError(error.message || "2FA failed."));
 });
+ui.settings2faSetupCode?.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter") return;
+  event.preventDefault();
+  verify2faSetup().catch((error) => addLog(`2FA verification failed: ${error.message}`, "warn"));
+});
 
 setConsentBadgeState();
 syncEncounterModeUi();
@@ -3135,6 +3372,7 @@ bindNavigation();
 bindPreferences();
 bindCodebook();
 bindNoteEditor();
+updateNoteMergeStatus();
 setAuthUserUi();
 applyRoleViewAccess();
 setAuthOverlayOpen(true);

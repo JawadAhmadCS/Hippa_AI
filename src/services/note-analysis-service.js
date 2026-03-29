@@ -32,10 +32,16 @@ const clampConfidence = (value) => Math.max(0, Math.min(1, Number(value) || 0));
 
 const normalizeNoteForAnalysis = (noteContent = {}) => {
   const sections = noteContent?.sections || {};
-  const providerAdditions = [noteContent.additionalProviderNotes, noteContent.freeTextAdditions]
-    .map((item) => String(item || "").trim())
-    .filter(Boolean)
-    .join("\n");
+  const manualNotes = String(noteContent.additionalProviderNotes || "").trim();
+  const mergedNotes = String(noteContent.freeTextAdditions || "").trim();
+  const providerAdditionsParts = [];
+  if (mergedNotes) {
+    providerAdditionsParts.push(mergedNotes);
+  }
+  if (manualNotes && !mergedNotes.toLowerCase().includes(manualNotes.toLowerCase())) {
+    providerAdditionsParts.push(`Manual Notes: ${manualNotes}`);
+  }
+  const providerAdditions = providerAdditionsParts.join("\n");
   const lines = [
     `HPI: ${String(sections.hpi || "").trim()}`,
     `ROS: ${String(sections.ros || "").trim()}`,

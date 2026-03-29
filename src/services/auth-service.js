@@ -52,6 +52,7 @@ const normalizeUserRecord = (user = {}) => ({
   phoneNumber: normalizePhone(user.phoneNumber),
   sms2faEnabled:
     typeof user.sms2faEnabled === "boolean" ? user.sms2faEnabled : Boolean(normalizePhone(user.phoneNumber)),
+  mfaEnabled: typeof user.mfaEnabled === "boolean" ? user.mfaEnabled : false,
   failedAttempts: Number(user.failedAttempts || 0),
   lockedUntil: String(user.lockedUntil || ""),
   createdAt: String(user.createdAt || nowIso()),
@@ -65,7 +66,9 @@ const normalizeUserRecord = (user = {}) => ({
 });
 
 const getAvailableFactorsForUser = (user) => {
-  const factors = ["totp"];
+  const factors = [];
+  const totpAllowed = Boolean(user?.totp?.enabled && String(user?.totp?.secret || "").trim());
+  if (totpAllowed) factors.push("totp");
   const smsAllowed = Boolean(user?.sms2faEnabled && normalizePhone(user?.phoneNumber));
   if (smsAllowed) factors.push("sms");
   return factors;
@@ -202,6 +205,7 @@ const buildSeedUser = ({
     specialties: normalizeSpecialties(specialties),
     phoneNumber: normalizePhone(phoneNumber),
     sms2faEnabled: Boolean(normalizePhone(phoneNumber)),
+    mfaEnabled: false,
     passwordSalt,
     passwordHash: hashPassword(password, passwordSalt),
     failedAttempts: 0,
@@ -217,6 +221,39 @@ const buildSeedUser = ({
   };
 };
 
+const createSessionForUser = ({
+  user,
+  ip = "",
+  userAgent = "",
+  mfaMethod = "none",
+}) => {
+  const rawToken = crypto.randomBytes(32).toString("base64url");
+  const tokenHash = hashToken(rawToken);
+  const session = {
+    sessionId: crypto.randomUUID(),
+    userId: user.id,
+    username: user.username,
+    role: user.role,
+    displayName: user.displayName,
+    clientId: user.clientId || "default-clinic",
+    clientName: user.clientName || "Default Clinic",
+    specialties: normalizeSpecialties(user.specialties),
+    createdAt: nowIso(),
+    createdAtMs: nowMs(),
+    expiresAtMs: nowMs() + SESSION_TTL_MS,
+    mfaVerifiedAtMs: nowMs(),
+    mfaMethod,
+    ip: String(ip || "").trim(),
+    userAgent: String(userAgent || "").trim().slice(0, 300),
+  };
+  sessionsByTokenHash.set(tokenHash, session);
+  return {
+    token: rawToken,
+    expiresAt: new Date(session.expiresAtMs).toISOString(),
+    session,
+  };
+};
+
 const sanitizePublicUser = (user) => ({
   id: user.id,
   username: user.username,
@@ -226,6 +263,7 @@ const sanitizePublicUser = (user) => ({
   clientName: user.clientName || "Default Clinic",
   specialties: normalizeSpecialties(user.specialties),
   phoneMasked: maskPhone(user.phoneNumber),
+  mfaEnabled: Boolean(user?.mfaEnabled),
   sms2faEnabled: Boolean(user?.sms2faEnabled && normalizePhone(user?.phoneNumber)),
   mfaFactors: getAvailableFactorsForUser(user),
   totpEnabled: Boolean(user?.totp?.enabled),
@@ -369,20 +407,37 @@ export const loginWithPassword = ({ username, password, clientId = "", ip = "", 
   };
   persistUpdatedUser(store, unlocked);
 
-  const challengeId = crypto.randomUUID();
-  const setupRequired = !Boolean(unlocked?.totp?.enabled);
+  if (!Boolean(unlocked.mfaEnabled)) {
+    const direct = createSessionForUser({
+      user: unlocked,
+      ip,
+      userAgent,
+      mfaMethod: "none",
+    });
+    return {
+      ok: true,
+      mfaRequired: false,
+      token: direct.token,
+      expiresAt: direct.expiresAt,
+      mfaMethod: "none",
+      user: sanitizePublicUser(unlocked),
+    };
+  }
+
   const factors = getAvailableFactorsForUser(unlocked);
-  const preferredFactor = factors.includes("totp")
-    ? setupRequired
-      ? factors.includes("sms")
-        ? "sms"
-        : "totp"
-      : "totp"
-    : "sms";
+  if (!factors.length) {
+    return {
+      ok: false,
+      error:
+        "2FA is enabled but no verification factor is configured. Disable 2FA from Settings or configure a factor.",
+    };
+  }
+
+  const challengeId = crypto.randomUUID();
+  const preferredFactor = factors.includes("totp") ? "totp" : factors[0];
   challengesById.set(challengeId, {
     challengeId,
     userId: unlocked.id,
-    setupRequired,
     availableFactors: factors,
     preferredFactor,
     createdAtMs: nowMs(),
@@ -394,27 +449,17 @@ export const loginWithPassword = ({ username, password, clientId = "", ip = "", 
     smsSentAtMs: 0,
   });
 
-  const otpauthUri = buildOtpauthUri({
-    username: unlocked.username,
-    secret: unlocked.totp.secret,
-  });
-
   return {
     ok: true,
+    mfaRequired: true,
     challenge: {
       challengeId,
       expiresAt: new Date(nowMs() + CHALLENGE_TTL_MS).toISOString(),
       mfaRequired: true,
-      mfaSetupRequired: setupRequired,
+      mfaSetupRequired: false,
       availableFactors: factors,
       preferredFactor,
-      setup: setupRequired
-        ? {
-            secret: unlocked.totp.secret,
-            otpauthUri,
-            qrImageUrl: buildQrImageUrl(otpauthUri),
-          }
-        : null,
+      setup: null,
       user: sanitizePublicUser(unlocked),
     },
   };
@@ -478,7 +523,14 @@ export const verifyLogin2fa = ({ challengeId, code, method = "totp", ip = "", us
   const preferred = String(challenge.preferredFactor || "totp").toLowerCase();
   const normalizedMethod = String(method || preferred || "totp").toLowerCase();
   const factors = getAvailableFactorsForUser(user);
-  const selectedMethod = factors.includes(normalizedMethod) ? normalizedMethod : preferred;
+  if (!factors.length) {
+    return { ok: false, error: "No 2FA factor is configured for this account." };
+  }
+  const selectedMethod = factors.includes(normalizedMethod)
+    ? normalizedMethod
+    : factors.includes(preferred)
+      ? preferred
+      : factors[0];
 
   let totpCounter = Number(user?.totp?.lastUsedCounter ?? -1);
 
@@ -528,33 +580,165 @@ export const verifyLogin2fa = ({ challengeId, code, method = "totp", ip = "", us
   persistUpdatedUser(store, updatedUser);
   challengesById.delete(challenge.challengeId);
 
-  const rawToken = crypto.randomBytes(32).toString("base64url");
-  const tokenHash = hashToken(rawToken);
-  const session = {
-    sessionId: crypto.randomUUID(),
-    userId: updatedUser.id,
-    username: updatedUser.username,
-    role: updatedUser.role,
-    displayName: updatedUser.displayName,
-    clientId: updatedUser.clientId || "default-clinic",
-    clientName: updatedUser.clientName || "Default Clinic",
-    specialties: normalizeSpecialties(updatedUser.specialties),
-    createdAt: nowIso(),
-    createdAtMs: nowMs(),
-    expiresAtMs: nowMs() + SESSION_TTL_MS,
-    mfaVerifiedAtMs: nowMs(),
-    mfaMethod: selectedMethod,
+  const login = createSessionForUser({
+    user: updatedUser,
     ip: String(ip || challenge.ip || "").trim(),
     userAgent: String(userAgent || challenge.userAgent || "").trim().slice(0, 300),
-  };
-  sessionsByTokenHash.set(tokenHash, session);
+    mfaMethod: selectedMethod,
+  });
 
   return {
     ok: true,
-    token: rawToken,
-    expiresAt: new Date(session.expiresAtMs).toISOString(),
+    token: login.token,
+    expiresAt: login.expiresAt,
     mfaMethod: selectedMethod,
     user: sanitizePublicUser(updatedUser),
+  };
+};
+
+const buildMfaSettingsPayload = (user) => ({
+  mfaEnabled: Boolean(user?.mfaEnabled),
+  totpEnabled: Boolean(user?.totp?.enabled),
+  sms2faEnabled: Boolean(user?.sms2faEnabled && normalizePhone(user?.phoneNumber)),
+  availableFactors: getAvailableFactorsForUser(user),
+  phoneMasked: maskPhone(user?.phoneNumber),
+  updatedAt: String(user?.updatedAt || ""),
+});
+
+export const getUserMfaSettings = ({ userId }) => {
+  const store = readUserStore();
+  const user = findUserById(store, userId);
+  if (!user) return { ok: false, error: "User not found." };
+  return {
+    ok: true,
+    settings: buildMfaSettingsPayload(user),
+    user: sanitizePublicUser(user),
+  };
+};
+
+export const startUserTotpSetup = ({ userId }) => {
+  const store = readUserStore();
+  const user = findUserById(store, userId);
+  if (!user) return { ok: false, error: "User not found." };
+
+  const hasConfiguredTotp = Boolean(user?.totp?.enabled && String(user?.totp?.secret || "").trim());
+  const nextSecret = hasConfiguredTotp
+    ? String(user?.totp?.secret || "").trim().toUpperCase()
+    : randomBase32Secret(20);
+
+  const updatedUser = hasConfiguredTotp
+    ? user
+    : {
+        ...user,
+        totp: {
+          ...user.totp,
+          enabled: false,
+          enabledAt: "",
+          lastUsedCounter: -1,
+          secret: nextSecret,
+        },
+        updatedAt: nowIso(),
+      };
+  if (!hasConfiguredTotp) {
+    persistUpdatedUser(store, updatedUser);
+  }
+
+  const otpauthUri = buildOtpauthUri({
+    username: updatedUser.username,
+    secret: nextSecret,
+  });
+
+  return {
+    ok: true,
+    setup: {
+      secret: nextSecret,
+      otpauthUri,
+      qrImageUrl: buildQrImageUrl(otpauthUri),
+    },
+    settings: buildMfaSettingsPayload(updatedUser),
+    user: sanitizePublicUser(updatedUser),
+  };
+};
+
+export const verifyUserTotpSetup = ({ userId, code, enableMfa = true }) => {
+  const store = readUserStore();
+  const user = findUserById(store, userId);
+  if (!user) return { ok: false, error: "User not found." };
+
+  const secret = String(user?.totp?.secret || "").trim().toUpperCase();
+  if (!secret) {
+    return { ok: false, error: "TOTP secret not found. Start setup first." };
+  }
+
+  const check = verifyTotpCode({ secret, code, user });
+  if (!check.ok) {
+    return { ok: false, error: "Invalid 2FA code." };
+  }
+
+  const updatedUser = {
+    ...user,
+    mfaEnabled: Boolean(enableMfa) ? true : Boolean(user.mfaEnabled),
+    totp: {
+      ...user.totp,
+      enabled: true,
+      enabledAt: user.totp?.enabledAt || nowIso(),
+      lastUsedCounter: Number(check.counter),
+      secret,
+    },
+    updatedAt: nowIso(),
+  };
+  persistUpdatedUser(store, updatedUser);
+
+  return {
+    ok: true,
+    settings: buildMfaSettingsPayload(updatedUser),
+    user: sanitizePublicUser(updatedUser),
+  };
+};
+
+export const updateUserMfaSettings = ({ userId, mfaEnabled, sms2faEnabled }) => {
+  const store = readUserStore();
+  const user = findUserById(store, userId);
+  if (!user) return { ok: false, error: "User not found." };
+
+  let next = {
+    ...user,
+  };
+
+  if (typeof sms2faEnabled === "boolean") {
+    if (sms2faEnabled && !normalizePhone(user.phoneNumber)) {
+      return { ok: false, error: "SMS 2FA cannot be enabled without a phone number." };
+    }
+    next.sms2faEnabled = sms2faEnabled;
+  }
+
+  if (typeof mfaEnabled === "boolean") {
+    if (mfaEnabled && !getAvailableFactorsForUser(next).length) {
+      return {
+        ok: false,
+        error: "Configure a verification factor first (Authenticator app or SMS) before enabling 2FA.",
+      };
+    }
+    next.mfaEnabled = mfaEnabled;
+  }
+
+  if (next.mfaEnabled && !getAvailableFactorsForUser(next).length) {
+    return {
+      ok: false,
+      error: "At least one verification factor must remain enabled while 2FA is required.",
+    };
+  }
+
+  next = {
+    ...next,
+    updatedAt: nowIso(),
+  };
+  persistUpdatedUser(store, next);
+
+  return {
+    ok: true,
+    settings: buildMfaSettingsPayload(next),
+    user: sanitizePublicUser(next),
   };
 };
 

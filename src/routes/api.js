@@ -45,11 +45,15 @@ import { buildRevenueCsv, buildRevenueReport } from "../services/reporting-servi
 import {
   authenticateToken,
   getAuthConstants,
+  getUserMfaSettings,
   loginWithPassword,
   requiresRecentMfa,
   revokeSession,
   sendLoginSmsCode,
+  startUserTotpSetup,
+  updateUserMfaSettings,
   verifyLogin2fa,
+  verifyUserTotpSetup,
 } from "../services/auth-service.js";
 import {
   addBaaDocument,
@@ -418,8 +422,18 @@ router.post(
       username,
       clientId,
       ip: request.ip,
-      mfaSetupRequired: Boolean(result.challenge?.mfaSetupRequired),
+      mfaRequired: Boolean(result.mfaRequired),
     });
+    if (!result.mfaRequired) {
+      response.json({
+        mfaRequired: false,
+        token: result.token,
+        expiresAt: result.expiresAt,
+        mfaMethod: result.mfaMethod || "none",
+        user: result.user,
+      });
+      return;
+    }
     response.json(result.challenge);
   })
 );
@@ -960,6 +974,7 @@ router.get(
       )
       .map((item) => getFinalizedNotePacket(item.id))
       .filter(Boolean)
+      .filter((packet) => !packet.billingAccessExpired)
       .map((packet) => ({
         appointmentId: packet.appointmentId,
         patientRef: packet.patientRef,
@@ -969,6 +984,8 @@ router.get(
         telehealthPlatform: packet.telehealthPlatform,
         noteId: packet.noteId,
         finalizedAt: packet.finalizedAt,
+        expectedRevenueFromAppointment: Number(packet.expectedRevenueFromAppointment || 0),
+        billingAccessExpiresAt: packet.billingAccessExpiresAt,
         approvedCodes: packet.approvedCodes || [],
         confidence: packet.codingAnalysis?.confidence || 0,
       }));
@@ -983,6 +1000,13 @@ router.get(
     const packet = getFinalizedNotePacket(request.params.appointmentId);
     if (!packet) {
       response.status(404).json({ error: "No finalized note available for billing." });
+      return;
+    }
+    if (packet.billingAccessExpired) {
+      response.status(410).json({
+        error: "Finalized note exceeded the 60-day billing portal retention window.",
+        billingAccessExpiresAt: packet.billingAccessExpiresAt,
+      });
       return;
     }
     if (
@@ -1401,6 +1425,105 @@ router.put(
       at: new Date().toISOString(),
     });
     response.json({ settings });
+  })
+);
+
+router.get(
+  "/settings/security/2fa",
+  requireAuth(),
+  withAsync(async (request, response) => {
+    const result = getUserMfaSettings({ userId: request.auth.userId });
+    if (!result.ok) {
+      response.status(404).json({ error: result.error || "Unable to load 2FA settings." });
+      return;
+    }
+    response.json({
+      settings: result.settings,
+      user: result.user,
+    });
+  })
+);
+
+router.put(
+  "/settings/security/2fa",
+  requireAuth(),
+  withAsync(async (request, response) => {
+    const payload = request.body || {};
+    const result = updateUserMfaSettings({
+      userId: request.auth.userId,
+      mfaEnabled: typeof payload.mfaEnabled === "boolean" ? payload.mfaEnabled : undefined,
+      sms2faEnabled: typeof payload.sms2faEnabled === "boolean" ? payload.sms2faEnabled : undefined,
+    });
+    if (!result.ok) {
+      response.status(400).json({ error: result.error || "Unable to update 2FA settings." });
+      return;
+    }
+    fireAndForgetAudit("settings.security.2fa.updated", {
+      userId: request.auth.userId,
+      username: request.auth.username,
+      role: request.auth.role,
+      mfaEnabled: result.settings?.mfaEnabled,
+      sms2faEnabled: result.settings?.sms2faEnabled,
+      at: new Date().toISOString(),
+    });
+    response.json({
+      settings: result.settings,
+      user: result.user,
+    });
+  })
+);
+
+router.post(
+  "/settings/security/2fa/setup",
+  requireAuth(),
+  withAsync(async (request, response) => {
+    const result = startUserTotpSetup({ userId: request.auth.userId });
+    if (!result.ok) {
+      response.status(400).json({ error: result.error || "Unable to start authenticator setup." });
+      return;
+    }
+    fireAndForgetAudit("settings.security.2fa.setup.started", {
+      userId: request.auth.userId,
+      username: request.auth.username,
+      role: request.auth.role,
+      at: new Date().toISOString(),
+    });
+    response.json({
+      setup: result.setup,
+      settings: result.settings,
+      user: result.user,
+    });
+  })
+);
+
+router.post(
+  "/settings/security/2fa/verify",
+  requireAuth(),
+  withAsync(async (request, response) => {
+    const code = String(request.body.code || "").trim();
+    if (!code) {
+      response.status(400).json({ error: "2FA code is required." });
+      return;
+    }
+    const result = verifyUserTotpSetup({
+      userId: request.auth.userId,
+      code,
+      enableMfa: true,
+    });
+    if (!result.ok) {
+      response.status(400).json({ error: result.error || "Unable to verify authenticator setup." });
+      return;
+    }
+    fireAndForgetAudit("settings.security.2fa.setup.verified", {
+      userId: request.auth.userId,
+      username: request.auth.username,
+      role: request.auth.role,
+      at: new Date().toISOString(),
+    });
+    response.json({
+      settings: result.settings,
+      user: result.user,
+    });
   })
 );
 

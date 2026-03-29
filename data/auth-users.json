@@ -18,12 +18,12 @@
       "failedAttempts": 0,
       "lockedUntil": "",
       "createdAt": "2026-03-26T21:14:44.444Z",
-      "updatedAt": "2026-03-26T21:14:45.783Z",
+      "updatedAt": "2026-03-28T07:41:54.459Z",
       "totp": {
-        "enabled": false,
+        "enabled": true,
         "secret": "FEPX3M2XC5O6S3LRX3NQ",
-        "enabledAt": "",
-        "lastUsedCounter": -1
+        "enabledAt": "2026-03-28T07:41:54.459Z",
+        "lastUsedCounter": 59156123
       }
     },
     {

@@ -2,7 +2,9 @@ import crypto from "node:crypto";
 
 const appointments = new Map();
 const NOTE_FIELDS = ["hpi", "ros", "exam", "assessment", "plan"];
-const NOTE_EXTRA_FIELDS = ["freeTextAdditions"];
+const NOTE_EXTRA_FIELDS = ["additionalProviderNotes", "freeTextAdditions"];
+const BILLING_ACCESS_RETENTION_DAYS = 60;
+const BILLING_ACCESS_RETENTION_MS = BILLING_ACCESS_RETENTION_DAYS * 24 * 60 * 60 * 1000;
 
 const roundMoney = (value) => Number(Number(value || 0).toFixed(2));
 const nowIso = () => new Date().toISOString();
@@ -24,9 +26,26 @@ const normalizeNoteContent = (content = {}) => ({
     assessment: normalizeNoteValue(content?.sections?.assessment),
     plan: normalizeNoteValue(content?.sections?.plan),
   },
-  additionalProviderNotes: "",
-  freeTextAdditions: mergeProviderAdditions(content),
+  additionalProviderNotes: normalizeNoteValue(content?.additionalProviderNotes),
+  freeTextAdditions: normalizeNoteValue(content?.freeTextAdditions) || mergeProviderAdditions(content),
 });
+
+const computeBillingAccessExpiresAt = (finalizedAt, existing) => {
+  const candidate = String(existing || "").trim();
+  if (candidate) {
+    const parsed = new Date(candidate).getTime();
+    if (Number.isFinite(parsed)) return new Date(parsed).toISOString();
+  }
+  const finalMs = new Date(finalizedAt || nowIso()).getTime();
+  const base = Number.isFinite(finalMs) ? finalMs : Date.now();
+  return new Date(base + BILLING_ACCESS_RETENTION_MS).toISOString();
+};
+
+const isBillingAccessExpired = (expiresAt) => {
+  const parsed = new Date(String(expiresAt || "")).getTime();
+  if (!Number.isFinite(parsed)) return false;
+  return parsed < Date.now();
+};
 
 const emptyNoteContent = () => normalizeNoteContent({});
 
@@ -322,6 +341,8 @@ export const createAppointment = ({
       delivery: {
         ehrSentAt: null,
         billingSentAt: null,
+        billingAccessExpiresAt: null,
+        billingRetentionDays: BILLING_ACCESS_RETENTION_DAYS,
       },
     },
   };
@@ -599,10 +620,13 @@ export const finalizeCurrentNote = ({
   workflow.finalizedAt = finalizedVersion.finalizedAt;
   workflow.status = "finalized";
   workflow.locked = true;
+  const billingAccessExpiresAt = computeBillingAccessExpiresAt(finalizedVersion.finalizedAt);
   workflow.delivery = {
     ...(workflow.delivery || {}),
     ehrSentAt: nowIso(),
     billingSentAt: nowIso(),
+    billingAccessExpiresAt,
+    billingRetentionDays: BILLING_ACCESS_RETENTION_DAYS,
   };
   return {
     appointment,
@@ -619,18 +643,27 @@ export const getFinalizedNotePacket = (appointmentId) => {
 
   const finalVersion = workflow.versions.find((item) => item.versionId === workflow.finalizedVersionId);
   if (!finalVersion) return null;
+  const analysisSnapshot = finalVersion.analysisSnapshot || workflow.currentAnalysis || null;
+  const billingAccessExpiresAt = computeBillingAccessExpiresAt(
+    workflow.finalizedAt || finalVersion.finalizedAt,
+    workflow.delivery?.billingAccessExpiresAt
+  );
+  const billingAccessExpired = isBillingAccessExpired(billingAccessExpiresAt);
 
   const approvedCodes = (
     finalVersion.finalCodes ||
-    workflow.currentAnalysis?.cptCodes ||
+    analysisSnapshot?.cptCodes ||
     (appointment.revenueTracker?.billableCodes || []).map((item) => item.code)
   )
     .map((item) => (typeof item === "string" ? item : String(item?.code || "")))
     .map((item) => String(item || "").trim().toUpperCase())
     .filter(Boolean);
 
-  const analysisCodes = Array.isArray(workflow.currentAnalysis?.cptCodes)
-    ? workflow.currentAnalysis.cptCodes
+  const analysisCodes = Array.isArray(analysisSnapshot?.cptCodes)
+    ? analysisSnapshot.cptCodes
+    : [];
+  const analysisIcdCodes = Array.isArray(analysisSnapshot?.icdCodes)
+    ? analysisSnapshot.icdCodes
     : [];
   const billableCodes = Array.isArray(appointment.revenueTracker?.billableCodes)
     ? appointment.revenueTracker.billableCodes
@@ -658,6 +691,9 @@ export const getFinalizedNotePacket = (appointmentId) => {
       estimatedAmount: Number(billableMatch?.estimatedAmount || 0),
     };
   });
+  const expectedRevenueFromAppointment = roundMoney(
+    appointment.revenueTracker?.projectedTotal || appointment.revenueTracker?.earnedNow || 0
+  );
 
   return {
     appointmentId: appointment.id,
@@ -672,10 +708,16 @@ export const getFinalizedNotePacket = (appointmentId) => {
     noteId: workflow.noteId,
     noteStatus: workflow.status,
     finalizedAt: workflow.finalizedAt,
+    expectedRevenueFromAppointment,
+    billingAccessExpiresAt,
+    billingAccessExpired,
+    billingRetentionDays: Number(workflow.delivery?.billingRetentionDays || BILLING_ACCESS_RETENTION_DAYS),
     finalVersion,
     approvedCodes,
+    recommendedCptCodes: analysisCodes,
+    recommendedIcd10Codes: analysisIcdCodes,
     codeEvidence,
-    codingAnalysis: workflow.currentAnalysis || null,
+    codingAnalysis: analysisSnapshot,
     transcriptSegments: Array.isArray(appointment.transcriptSegments)
       ? appointment.transcriptSegments.map((segment) => ({
           id: segment.id,
@@ -685,6 +727,7 @@ export const getFinalizedNotePacket = (appointmentId) => {
           cleanedText: segment.cleanedText || segment.text || "",
         }))
       : [],
+    revenueTracker: appointment.revenueTracker || null,
   };
 };
 

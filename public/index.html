@@ -1615,9 +1615,14 @@
               <div class="form-input note-editor" id="notePlanEditor" contenteditable="true"></div>
             </div>
             <div class="form-field">
-              <label class="form-label" for="noteFreeText">Provider additions in chart notes</label>
-              <textarea class="form-input" id="noteFreeText" rows="4" style="height:auto;padding:10px;"></textarea>
+              <label class="form-label" for="noteManualNotes">Manual Notes (Post-Appointment)</label>
+              <textarea class="form-input" id="noteManualNotes" rows="4" style="height:auto;padding:10px;" placeholder="Add manual updates after the appointment."></textarea>
             </div>
+            <div class="form-field">
+              <label class="form-label" for="noteFreeText">Merged AI + Manual Chart Notes</label>
+              <textarea class="form-input" id="noteFreeText" rows="5" style="height:auto;padding:10px;" placeholder="AI-formatted merged notes appear here. Doctors can edit before finalizing."></textarea>
+            </div>
+            <div class="tiny-note" id="noteMergeStatus">Manual notes are merged with AI chart notes for final provider confirmation.</div>
           </div>
           <div class="info-card">
             <h3>Coding + Documentation Support</h3>
@@ -1728,21 +1733,28 @@
                   <tr>
                     <th>Appointment</th>
                     <th>Finalized</th>
+                    <th>Expected Revenue</th>
                     <th>Approved Codes</th>
                     <th>Confidence</th>
                     <th>Open</th>
                   </tr>
                 </thead>
                 <tbody id="billingQueueBody">
-                  <tr><td colspan="5" class="tiny-note">No finalized notes available.</td></tr>
+                  <tr><td colspan="6" class="tiny-note">No finalized notes available.</td></tr>
                 </tbody>
               </table>
             </div>
             <div class="info-card">
-              <h3>Final Note Preview</h3>
+              <h3>AI Chart Notes (Finalized by Doctor)</h3>
+              <div class="helper-text">Expected Revenue from Appointment</div>
+              <div class="tiny-note" id="billingExpectedRevenue">$0.00</div>
               <div class="tiny-note" id="billingFinalNotePreview">Select a finalized item from queue.</div>
               <div class="helper-text" style="margin-top:12px;">Transcript Excerpts (View Only)</div>
               <div class="tiny-note" id="billingTranscriptPreview">No transcript excerpts loaded.</div>
+              <div class="helper-text" style="margin-top:12px;">Recommended CPT Codes (with references)</div>
+              <div class="pill-list" id="billingRecommendedCpt"><span class="pill">No CPT recommendations loaded.</span></div>
+              <div class="helper-text" style="margin-top:12px;">Recommended ICD-10 Codes (with references)</div>
+              <div class="pill-list" id="billingRecommendedIcd"><span class="pill">No ICD-10 recommendations loaded.</span></div>
               <div class="helper-text" style="margin-top:12px;">Approved CPT/ICD</div>
               <div class="pill-list" id="billingApprovedCodes"><span class="pill">No codes selected.</span></div>
               <div class="helper-text" style="margin-top:12px;">Code Justification + Evidence</div>
@@ -2025,6 +2037,43 @@
               <button class="btn btn-ghost" type="button" data-jump-view="preferences">Open Preferences</button>
               <button class="btn btn-ghost" type="button" data-jump-view="hipaa">Open HIPAA Settings</button>
               <button class="btn btn-ghost" type="button" data-jump-view="revenue">Open Revenue Reports</button>
+            </div>
+          </div>
+
+          <div class="info-card">
+            <h3>2FA Security</h3>
+            <div class="kv-list" id="settings2faStatus">
+              <div class="tiny-note">Loading 2FA status...</div>
+            </div>
+            <div class="form-field" style="justify-content:flex-end;margin-top:8px;">
+              <label class="consent-label" for="settings2faEnabled">
+                <input type="checkbox" id="settings2faEnabled" />
+                Require 2FA on login
+              </label>
+            </div>
+            <div class="form-field" style="justify-content:flex-end;">
+              <label class="consent-label" for="settings2faSmsEnabled">
+                <input type="checkbox" id="settings2faSmsEnabled" />
+                Allow SMS verification code
+              </label>
+            </div>
+            <div class="inline-actions" style="margin-top:10px;">
+              <button class="btn btn-primary" id="save2faSettingsBtn" type="button">Save 2FA Settings</button>
+              <span class="tiny-note" id="settings2faSavedAt">Not saved yet</span>
+            </div>
+            <div class="helper-text" style="margin-top:14px;">Authenticator App Setup</div>
+            <div class="tiny-note" id="settings2faSetupHint">Generate a QR code, scan in an authenticator app, then verify.</div>
+            <div class="inline-actions" style="margin-top:8px;">
+              <button class="btn btn-ghost" id="settings2faSetupBtn" type="button">Generate Setup QR</button>
+            </div>
+            <div class="tiny-note" id="settings2faSetupSecret"></div>
+            <img id="settings2faSetupQr" alt="2FA setup QR" style="display:none;max-width:220px;border:1px solid var(--border);border-radius:8px;margin-top:8px;" />
+            <div class="form-field" style="margin-top:10px;">
+              <label class="form-label" for="settings2faSetupCode">Verification Code</label>
+              <input class="form-input" id="settings2faSetupCode" placeholder="123456" />
+            </div>
+            <div class="inline-actions">
+              <button class="btn btn-ghost" id="settings2faVerifyBtn" type="button">Verify Authenticator & Enable 2FA</button>
             </div>
           </div>
         </div>
@@ -2380,7 +2429,7 @@
 <div class="auth-overlay" id="authOverlay">
   <div class="auth-card">
     <h3>Secure Sign In</h3>
-    <p class="tiny-note">Login with password and 2FA to access PHI.</p>
+    <p class="tiny-note">Login with password. If 2FA is enabled in Settings, verification is required.</p>
     <p class="tiny-note" id="authPortalLabel"></p>
     <div class="stack-12">
       <div class="form-field">
@@ -2391,7 +2440,7 @@
         <label class="form-label" for="authPassword">Password</label>
         <input class="form-input" id="authPassword" type="password" placeholder="Enter password" />
       </div>
-      <button class="btn btn-primary" id="authPasswordBtn" type="button">Continue to 2FA</button>
+      <button class="btn btn-primary" id="authPasswordBtn" type="button">Sign In</button>
 
       <div id="auth2faBlock" style="display:none;">
         <div class="helper-text" id="authSetupHint">Enter 6-digit TOTP code.</div>
