@@ -94,6 +94,7 @@ const ui = {
   visitType: document.getElementById("visitType"),
   encounterMode: document.getElementById("encounterMode"),
   telehealthPlatform: document.getElementById("telehealthPlatform"),
+  recordingRetentionHint: document.getElementById("recordingRetentionHint"),
   consentGiven: document.getElementById("consentGiven"),
   consentBadge: document.getElementById("consentBadge"),
   startBtn: document.getElementById("startBtn"),
@@ -122,7 +123,6 @@ const ui = {
   noteAssessmentEditor: document.getElementById("noteAssessmentEditor"),
   notePlanEditor: document.getElementById("notePlanEditor"),
   noteManualNotes: document.getElementById("noteManualNotes"),
-  noteFreeText: document.getElementById("noteFreeText"),
   noteMergeStatus: document.getElementById("noteMergeStatus"),
   recalculateNoteBtn: document.getElementById("recalculateNoteBtn"),
   saveNoteDraftBtn: document.getElementById("saveNoteDraftBtn"),
@@ -507,6 +507,13 @@ const setConsentBadgeState = () => {
   }
   ui.consentBadge.textContent = "Required";
   ui.consentBadge.classList.remove("signed");
+};
+
+const setRecordingRetentionHint = (days = 60) => {
+  if (!ui.recordingRetentionHint) return;
+  const normalizedDays = Math.max(1, Number(days) || 60);
+  ui.recordingRetentionHint.textContent =
+    `HIPAA-FIRST | DOCTOR-ONLY WORKSPACE | Recording retention: ${normalizedDays} days`;
 };
 
 const syncEncounterModeUi = () => {
@@ -908,70 +915,87 @@ const setEditableText = (element, value) => {
   element.textContent = String(value || "").trim();
 };
 
-const MANUAL_NOTE_MERGE_MARKER = "Manual Notes:";
-
-const syncMergedNoteFromManual = () => {
-  if (!ui.noteManualNotes || !ui.noteFreeText) return;
-  const manual = String(ui.noteManualNotes.value || "").trim();
-  const merged = String(ui.noteFreeText.value || "").trim();
-  const markerRegex = /\n{0,2}Manual Notes:\n[\s\S]*$/i;
-  const base = merged.replace(markerRegex, "").trim();
-  if (!manual) {
-    ui.noteFreeText.value = base;
-    return;
-  }
-  ui.noteFreeText.value = `${base ? `${base}\n\n` : ""}${MANUAL_NOTE_MERGE_MARKER}\n${manual}`;
+const buildProviderNoteText = (content = {}) => {
+  const manual = String(content?.additionalProviderNotes || "").trim();
+  const merged = String(content?.freeTextAdditions || "").trim();
+  if (merged) return merged;
+  if (manual) return manual;
+  const sections = content?.sections || {};
+  return [
+    sections.hpi,
+    sections.ros,
+    sections.exam,
+    sections.assessment,
+    sections.plan,
+  ]
+    .map((item) => String(item || "").trim())
+    .filter(Boolean)
+    .join("\n");
 };
 
-const getNoteContentFromUi = () => ({
-  sections: {
-    hpi: getEditableText(ui.noteHpiEditor),
-    ros: getEditableText(ui.noteRosEditor),
-    exam: getEditableText(ui.noteExamEditor),
-    assessment: getEditableText(ui.noteAssessmentEditor),
-    plan: getEditableText(ui.notePlanEditor),
-  },
-  additionalProviderNotes: String(ui.noteManualNotes?.value || "").trim(),
-  freeTextAdditions: String(ui.noteFreeText?.value || "").trim(),
-});
+const syncProviderNoteIntoChartNotes = (noteText) => {
+  const normalized = String(noteText || "").trim();
+  const withoutProviderNote = Array.isArray(state.chartNotes)
+    ? state.chartNotes.filter((item) => String(item?.id || "") !== "provider-notes-context")
+    : [];
+
+  if (!normalized) {
+    state.chartNotes = withoutProviderNote;
+    renderChartNotes(state.chartNotes);
+    return;
+  }
+
+  const preview = normalized.length > 320 ? `${normalized.slice(0, 320).trim()}...` : normalized;
+  const providerNote = {
+    id: "provider-notes-context",
+    category: "Provider Notes",
+    text: "Doctor-entered notes were incorporated into AI chart notes and recommendations.",
+    detail: preview,
+    evidenceRefs: [],
+  };
+
+  state.chartNotes = [providerNote, ...withoutProviderNote].slice(0, 8);
+  renderChartNotes(state.chartNotes);
+};
+
+const getNoteContentFromUi = () => {
+  const noteText = String(ui.noteManualNotes?.value || "").trim();
+  const existingSections = state.noteEditor.note?.version?.contentJson?.sections || {};
+  return {
+    sections: {
+      hpi: String(existingSections.hpi || "").trim(),
+      ros: String(existingSections.ros || "").trim(),
+      exam: String(existingSections.exam || "").trim(),
+      assessment: String(existingSections.assessment || "").trim(),
+      plan: String(existingSections.plan || "").trim(),
+    },
+    additionalProviderNotes: noteText,
+    freeTextAdditions: noteText,
+  };
+};
 
 const setNoteContentToUi = (content = {}) => {
-  setEditableText(ui.noteHpiEditor, content?.sections?.hpi || "");
-  setEditableText(ui.noteRosEditor, content?.sections?.ros || "");
-  setEditableText(ui.noteExamEditor, content?.sections?.exam || "");
-  setEditableText(ui.noteAssessmentEditor, content?.sections?.assessment || "");
-  setEditableText(ui.notePlanEditor, content?.sections?.plan || "");
+  const providerText = buildProviderNoteText(content);
   if (ui.noteManualNotes) {
-    ui.noteManualNotes.value = String(content?.additionalProviderNotes || "").trim();
+    ui.noteManualNotes.value = providerText;
   }
-  if (ui.noteFreeText) {
-    ui.noteFreeText.value = String(content?.freeTextAdditions || "").trim();
-  }
+  syncProviderNoteIntoChartNotes(providerText);
   updateNoteMergeStatus();
 };
 
 const updateNoteMergeStatus = () => {
   if (!ui.noteMergeStatus) return;
-  const manual = String(ui.noteManualNotes?.value || "").trim();
-  const merged = String(ui.noteFreeText?.value || "").trim();
-  if (!manual && !merged) {
+  const noteText = String(ui.noteManualNotes?.value || "").trim();
+  if (!noteText) {
     ui.noteMergeStatus.textContent =
-      "Manual notes are merged with AI chart notes for final provider confirmation.";
+      "Type and save once. AI uses these notes for chart summary, next-step recommendations, and code suggestions.";
     return;
   }
-  const manualLines = manual ? manual.split(/\r?\n/).filter((line) => line.trim()).length : 0;
-  const mergedLines = merged ? merged.split(/\r?\n/).filter((line) => line.trim()).length : 0;
-  ui.noteMergeStatus.textContent = `Manual lines: ${manualLines} | Merged note lines: ${mergedLines}`;
+  const lines = noteText.split(/\r?\n/).filter((line) => line.trim()).length;
+  ui.noteMergeStatus.textContent = `Doctor note captured (${lines} lines). AI will merge it into chart notes and coding guidance.`;
 };
 
 const setNoteLockState = (locked) => {
-  const editable = [ui.noteHpiEditor, ui.noteRosEditor, ui.noteExamEditor, ui.noteAssessmentEditor, ui.notePlanEditor];
-  for (const item of editable) {
-    if (!item) continue;
-    item.setAttribute("contenteditable", locked ? "false" : "true");
-    item.style.background = locked ? "#f1f5f9" : "";
-  }
-  if (ui.noteFreeText) ui.noteFreeText.disabled = Boolean(locked);
   if (ui.noteManualNotes) ui.noteManualNotes.disabled = Boolean(locked);
   if (ui.saveNoteDraftBtn) ui.saveNoteDraftBtn.disabled = Boolean(locked);
   if (ui.recalculateNoteBtn) ui.recalculateNoteBtn.disabled = Boolean(locked);
@@ -1893,8 +1917,9 @@ const renderHipaaSettings = (payload) => {
   );
 
   if (ui.hipaaRetentionDays) {
-    ui.hipaaRetentionDays.value = Number(hipaa.dataRetentionDays || 365);
+    ui.hipaaRetentionDays.value = Number(hipaa.dataRetentionDays || 60);
   }
+  setRecordingRetentionHint(hipaa.dataRetentionDays || 60);
 
   if (ui.hipaaRoleAccessJson) {
     ui.hipaaRoleAccessJson.value = JSON.stringify(hipaa.roleAccess || {}, null, 2);
@@ -1987,7 +2012,7 @@ const saveHipaaPolicySettings = async () => {
     });
   }
 
-  const dataRetentionDays = Number(ui.hipaaRetentionDays?.value || current.dataRetentionDays || 365);
+  const dataRetentionDays = Number(ui.hipaaRetentionDays?.value || current.dataRetentionDays || 60);
   const payload = await api("/api/hipaa/settings", {
     method: "PUT",
     body: JSON.stringify({
@@ -2701,7 +2726,11 @@ const stopRecordingAndUpload = async () => {
   }
 
   const uploaded = await response.json();
-  addLog(`Recording uploaded to ${uploaded.recording.provider}.`, "good");
+  const expiresAt = String(uploaded?.recording?.retentionExpiresAt || "").trim();
+  const retentionLabel = expiresAt
+    ? ` Retained until ${formatDateTime(expiresAt)}.`
+    : "";
+  addLog(`Recording uploaded to ${uploaded.recording.provider}.${retentionLabel}`, "good");
 };
 
 const resetEncounterPanels = () => {
@@ -3233,21 +3262,13 @@ const bindNoteEditor = () => {
   });
 
   const autosaveInputs = [
-    ui.noteHpiEditor,
-    ui.noteRosEditor,
-    ui.noteExamEditor,
-    ui.noteAssessmentEditor,
-    ui.notePlanEditor,
     ui.noteManualNotes,
-    ui.noteFreeText,
   ];
 
   for (const input of autosaveInputs) {
     if (!input) continue;
     input.addEventListener("input", () => {
-      if (input === ui.noteManualNotes) {
-        syncMergedNoteFromManual();
-      }
+      syncProviderNoteIntoChartNotes(ui.noteManualNotes?.value || "");
       updateNoteMergeStatus();
       scheduleNoteAutosave();
     });
@@ -3365,6 +3386,7 @@ ui.settings2faSetupCode?.addEventListener("keydown", (event) => {
 });
 
 setConsentBadgeState();
+setRecordingRetentionHint(60);
 syncEncounterModeUi();
 applyClientLandingContext();
 setTranscriptBadge("Idle", false);

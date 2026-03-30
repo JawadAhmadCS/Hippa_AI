@@ -49,7 +49,7 @@ const defaultConfig = () => ({
         updatedAt: new Date().toISOString(),
       },
     ],
-    dataRetentionDays: 365,
+    dataRetentionDays: 60,
     roleAccess: {
       attendingDoctor: ["read_all", "write_all", "export"],
       nurse: ["read_transcript", "add_notes"],

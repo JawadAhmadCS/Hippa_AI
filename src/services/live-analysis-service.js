@@ -30,6 +30,19 @@ const countWords = (text) =>
     .split(/\s+/)
     .filter(Boolean).length;
 
+const getProviderNotesContext = (appointment = {}) => {
+  const workflow = appointment.noteWorkflow || {};
+  const versions = Array.isArray(workflow.versions) ? workflow.versions : [];
+  const current =
+    versions.find((item) => item?.versionId && item.versionId === workflow.currentVersionId) ||
+    versions[versions.length - 1] ||
+    null;
+  const content = current?.contentJson || {};
+  const merged = String(content?.freeTextAdditions || "").trim();
+  if (merged) return merged;
+  return String(content?.additionalProviderNotes || "").trim();
+};
+
 const uniqueBy = (items, keySelector) => {
   const seen = new Set();
   const output = [];
@@ -68,13 +81,18 @@ export const runLiveAnalysisPipeline = async ({
 }) => {
   const startedAt = Date.now();
   const transcriptContext = getTranscriptContext(appointment.id, env.aiContextWindowSegments);
+  const providerNotesContext = getProviderNotesContext(appointment);
+  const analysisContext = [transcriptContext, providerNotesContext]
+    .map((item) => String(item || "").trim())
+    .filter(Boolean)
+    .join("\n");
   const transcriptSegments = appointment.transcriptSegments;
   const existingCodes = new Set(appointment.suggestions.map((item) => item.code));
   const existingIcd = new Set(appointment.icdSuggestions.map((item) => item.code));
 
   const ruleSuggestions = attachEvidenceRefsToItems(
     inferRuleBasedSuggestions({
-      segment: transcriptContext,
+      segment: analysisContext,
       existingCodes,
       doctorSpecialties: appointment.doctorSpecialties || [],
     }).filter((item) => item.code !== baselineCode),
@@ -89,7 +107,7 @@ export const runLiveAnalysisPipeline = async ({
 
   const ruleIcdSuggestions = attachEvidenceRefsToItems(
     inferRuleBasedIcdSuggestions({
-      segment: transcriptContext,
+      segment: analysisContext,
       existingIcd,
     }),
     {
@@ -101,13 +119,13 @@ export const runLiveAnalysisPipeline = async ({
     newlyAdded: [],
   };
 
-  const ruleGuidance = attachEvidenceRefsToItems(inferRuleBasedGuidance({ segment: transcriptContext }), {
+  const ruleGuidance = attachEvidenceRefsToItems(inferRuleBasedGuidance({ segment: analysisContext }), {
     transcriptSegments,
     cueSelector: (item) => [item.prompt, item.rationale, item.evidence],
   });
   const ruleMissedBillables = attachEvidenceRefsToItems(
     detectRuleBasedMissedBillables({
-      segment: transcriptContext,
+      segment: analysisContext,
       suggestions: appointment.suggestions,
       baselineCode,
     }),
@@ -123,7 +141,7 @@ export const runLiveAnalysisPipeline = async ({
     }
   );
   const ruleDocumentationGaps = attachEvidenceRefsToItems(
-    detectRuleBasedDocumentationGaps({ segment: transcriptContext }),
+    detectRuleBasedDocumentationGaps({ segment: analysisContext }),
     {
       transcriptSegments,
       cueSelector: (item) => [item.gap, item.impact, item.recommendedPrompt, item.evidence],
@@ -140,7 +158,7 @@ export const runLiveAnalysisPipeline = async ({
   let aiDocumentationGaps = [];
 
   if (featureFlags.hasOpenAi) {
-    const segmentWordCount = countWords(latestSegment);
+    const segmentWordCount = countWords([latestSegment, providerNotesContext].filter(Boolean).join(" "));
     const now = Date.now();
     const lastAiRunAt = Number(appointment.analysisState?.lastAiRunAt || 0);
     const enoughWords = segmentWordCount >= env.aiMinWordsForAnalysis;
@@ -165,6 +183,7 @@ export const runLiveAnalysisPipeline = async ({
           doctorSpecialties: appointment.doctorSpecialties || [],
           transcriptContext,
           latestSegment,
+          providerNotes: providerNotesContext,
           baselineCode,
           existingCodes: appointment.suggestions.map((item) => item.code),
         });
@@ -250,6 +269,7 @@ export const runLiveAnalysisPipeline = async ({
   });
   const chartNotes = buildChartNotes({
     transcriptSegments,
+    providerNotes: providerNotesContext,
   });
 
   const tracker = estimateRevenueTracker({

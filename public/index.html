@@ -1427,7 +1427,7 @@
             </div>
             Encounter Setup
           </div>
-          <span class="card-subtitle">HIPAA-FIRST · DOCTOR-ONLY WORKSPACE</span>
+          <span class="card-subtitle" id="recordingRetentionHint">HIPAA-FIRST | DOCTOR-ONLY WORKSPACE | Recording retention: 60 days</span>
         </div>
         <div class="setup-body">
           <div class="form-grid">
@@ -1593,36 +1593,12 @@
         </div>
         <div class="setup-body settings-grid">
           <div class="info-card">
-            <h3>Structured Clinical Note</h3>
+            <h3>Doctor Notes</h3>
             <div class="form-field">
-              <label class="form-label" for="noteHpiEditor">HPI</label>
-              <div class="form-input note-editor" id="noteHpiEditor" contenteditable="true"></div>
+              <label class="form-label" for="noteManualNotes">Doctor Notes</label>
+              <textarea class="form-input" id="noteManualNotes" rows="8" style="height:auto;padding:10px;" placeholder="Type your notes in plain language. AI will incorporate these notes into chart notes, recommendations, and coding suggestions."></textarea>
             </div>
-            <div class="form-field">
-              <label class="form-label" for="noteRosEditor">ROS</label>
-              <div class="form-input note-editor" id="noteRosEditor" contenteditable="true"></div>
-            </div>
-            <div class="form-field">
-              <label class="form-label" for="noteExamEditor">Exam</label>
-              <div class="form-input note-editor" id="noteExamEditor" contenteditable="true"></div>
-            </div>
-            <div class="form-field">
-              <label class="form-label" for="noteAssessmentEditor">Assessment</label>
-              <div class="form-input note-editor" id="noteAssessmentEditor" contenteditable="true"></div>
-            </div>
-            <div class="form-field">
-              <label class="form-label" for="notePlanEditor">Plan</label>
-              <div class="form-input note-editor" id="notePlanEditor" contenteditable="true"></div>
-            </div>
-            <div class="form-field">
-              <label class="form-label" for="noteManualNotes">Manual Notes (Post-Appointment)</label>
-              <textarea class="form-input" id="noteManualNotes" rows="4" style="height:auto;padding:10px;" placeholder="Add manual updates after the appointment."></textarea>
-            </div>
-            <div class="form-field">
-              <label class="form-label" for="noteFreeText">Merged AI + Manual Chart Notes</label>
-              <textarea class="form-input" id="noteFreeText" rows="5" style="height:auto;padding:10px;" placeholder="AI-formatted merged notes appear here. Doctors can edit before finalizing."></textarea>
-            </div>
-            <div class="tiny-note" id="noteMergeStatus">Manual notes are merged with AI chart notes for final provider confirmation.</div>
+            <div class="tiny-note" id="noteMergeStatus">Type and save once. AI uses these notes for chart summary, next-step recommendations, and code suggestions.</div>
           </div>
           <div class="info-card">
             <h3>Coding + Documentation Support</h3>

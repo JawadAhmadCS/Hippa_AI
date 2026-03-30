@@ -23,6 +23,8 @@ HIPAA-first medical AI assistant prototype for live doctor-patient encounters.
 - Compliant assistant suggestions with transcript evidence + MDM justifications
 - Revenue projection split by current coded revenue vs suggested-code opportunity
 - Audio recording storage (Azure Blob + local fallback)
+- Encounter audio recording auto-starts when doctor starts the encounter
+- Recording retention metadata is set to 60 days by default
 - SSE streaming channel for real-time backend analysis updates
 - Production readiness tracker for BAAs, security hardening, and legal/compliance approvals
 
@@ -107,6 +109,7 @@ Also used:
 - `OPENAI_FINAL_REVIEW_MODEL` (default `gpt-4.1`)
 - `PORT` (default `8787`)
 - `AZURE_STORAGE_CONTAINER` (default `appointment-audio`)
+- `RECORDING_RETENTION_DAYS` (default `60`)
 - `COMPLIANCE_LOG_RETENTION_DAYS`
 - `CODEBOOK_STALE_DAYS`
 - `REQUEST_BODY_LIMIT_MB` (default `2`)

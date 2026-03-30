@@ -1323,11 +1323,18 @@ router.post(
       return;
     }
 
+    const hipaaSettings = getHipaaSettings();
+    const retentionFromHipaa = Number(hipaaSettings?.dataRetentionDays || 0);
+    const retentionDays = Number.isFinite(retentionFromHipaa) && retentionFromHipaa > 0
+      ? Math.floor(retentionFromHipaa)
+      : env.recordingRetentionDays;
+
     const uploaded = await uploadAppointmentAudio({
       appointmentId: appointment.id,
       buffer: request.file.buffer,
       mimeType: request.file.mimetype,
       fileName: request.file.originalname,
+      retentionDays,
     });
 
     addRecording(appointment.id, uploaded);
@@ -1337,6 +1344,8 @@ router.post(
       provider: uploaded.provider,
       mimeType: uploaded.mimeType,
       blobName: uploaded.blobName,
+      retentionDays: uploaded.retentionDays,
+      retentionExpiresAt: uploaded.retentionExpiresAt,
     });
 
     response.status(201).json({ recording: uploaded });

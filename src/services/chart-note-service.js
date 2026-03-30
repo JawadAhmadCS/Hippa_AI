@@ -47,12 +47,31 @@ const NOTE_RULES = [
 
 const containsAny = (text, keywords) => keywords.some((keyword) => text.includes(keyword));
 
-export const buildChartNotes = ({ transcriptSegments = [] } = {}) => {
-  const segments = Array.isArray(transcriptSegments) ? transcriptSegments : [];
-  if (!segments.length) return [];
+const buildProviderNoteCard = (providerNotes = "") => {
+  const normalized = String(providerNotes || "").trim();
+  if (!normalized) return null;
+  const preview = normalized.length > 320 ? `${normalized.slice(0, 320).trim()}...` : normalized;
+  return {
+    id: "provider-notes-context",
+    category: "Provider Notes",
+    text: "Doctor-entered notes were incorporated into the chart summary.",
+    detail: preview,
+    evidenceRefs: [],
+  };
+};
 
-  const transcriptText = segments
-    .map((segment) => String(segment?.cleanedText || segment?.text || "").toLowerCase())
+export const buildChartNotes = ({ transcriptSegments = [], providerNotes = "" } = {}) => {
+  const segments = Array.isArray(transcriptSegments) ? transcriptSegments : [];
+  const providerNoteCard = buildProviderNoteCard(providerNotes);
+  if (!segments.length) {
+    return providerNoteCard ? [providerNoteCard] : [];
+  }
+
+  const transcriptText = [
+    ...segments.map((segment) => String(segment?.cleanedText || segment?.text || "").toLowerCase()),
+    String(providerNotes || "").toLowerCase(),
+  ]
+    .filter(Boolean)
     .join(" ");
 
   const notes = NOTE_RULES.filter((rule) => containsAny(transcriptText, rule.keywords)).map((rule) => ({
@@ -67,12 +86,13 @@ export const buildChartNotes = ({ transcriptSegments = [] } = {}) => {
     }),
   }));
 
-  if (notes.length) {
-    return notes.slice(0, 6);
+  const withProviderNotes = providerNoteCard ? [providerNoteCard, ...notes] : notes;
+  if (withProviderNotes.length) {
+    return withProviderNotes.slice(0, 6);
   }
 
   const latest = segments[segments.length - 1];
-  return [
+  const fallback = [
     {
       id: "encounter-captured",
       category: "Summary",
@@ -91,4 +111,5 @@ export const buildChartNotes = ({ transcriptSegments = [] } = {}) => {
         : [],
     },
   ];
+  return providerNoteCard ? [providerNoteCard, ...fallback].slice(0, 6) : fallback;
 };

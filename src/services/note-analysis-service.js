@@ -204,6 +204,7 @@ export const recalculateNoteCoding = async ({
           doctorSpecialties: appointment.doctorSpecialties || [],
           transcriptContext: noteText,
           latestSegment: noteText,
+          providerNotes: noteText,
         baselineCode,
         existingCodes: [],
       });

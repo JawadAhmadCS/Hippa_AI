@@ -14,6 +14,7 @@ Rules:
 - Never suggest medically unnecessary services.
 - Only suggest codes supported by explicit transcript evidence.
 - Include a brief transcript-supported evidence string for every item you return.
+- You may also use explicit doctor-entered notes as supporting clinical evidence context.
 - For each CPT/HCPCS suggestion include an explicit MDM justification sentence.
 - Do not suggest baseline E/M code if it is already assumed for the visit.
 - Guidance must be brief, concrete, and phrased as doctor prompts.
@@ -187,6 +188,7 @@ export const analyzeTranscriptForSuggestions = async ({
   doctorSpecialties = [],
   transcriptContext,
   latestSegment,
+  providerNotes = "",
   baselineCode = "99213",
   existingCodes = [],
 }) => {
@@ -241,6 +243,7 @@ export const analyzeTranscriptForSuggestions = async ({
                   `Baseline E/M code already assumed: ${baselineCode}`,
                   `Existing codes already selected: ${existingCodes.join(", ") || "none"}`,
                   `Latest segment: ${latestSegment || "n/a"}`,
+                  `Doctor-entered notes: ${providerNotes || "none"}`,
                   "Transcript context (most recent first):",
                   transcriptContext,
                 ].join("\n"),

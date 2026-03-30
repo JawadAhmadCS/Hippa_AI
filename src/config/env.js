@@ -40,6 +40,7 @@ export const env = {
   azureSpeechRegion: process.env.AZURE_SPEECH_REGION ?? "",
   azureStorageConnectionString: process.env.AZURE_STORAGE_CONNECTION_STRING ?? "",
   azureStorageContainer: process.env.AZURE_STORAGE_CONTAINER ?? "appointment-audio",
+  recordingRetentionDays: Math.max(1, asNumber(process.env.RECORDING_RETENTION_DAYS, 60)),
   complianceLogRetentionDays: asNumber(process.env.COMPLIANCE_LOG_RETENTION_DAYS, 365),
   codebookStaleDays: asNumber(process.env.CODEBOOK_STALE_DAYS, 90),
   requestBodyLimitMb: Math.max(1, asNumber(process.env.REQUEST_BODY_LIMIT_MB, 2)),
