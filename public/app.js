@@ -162,6 +162,8 @@ const ui = {
   billingCodeEvidence: document.getElementById("billingCodeEvidence"),
   pastAuditSummary: document.getElementById("pastAuditSummary"),
   pastEncounterAuditList: document.getElementById("pastEncounterAuditList"),
+  pastEncounterDataSummary: document.getElementById("pastEncounterDataSummary"),
+  pastEncounterDataBody: document.getElementById("pastEncounterDataBody"),
   reportGeneratedAt: document.getElementById("reportGeneratedAt"),
   reportGranularity: document.getElementById("reportGranularity"),
   reportDateFrom: document.getElementById("reportDateFrom"),
@@ -1287,7 +1289,7 @@ const renderPastEncounters = (appointments) => {
             )}/transcript.pdf${accessSuffix}" target="_blank" rel="noopener">PDF</a>
             <button class="btn btn-ghost" style="height:30px;padding:0 10px;" data-audit-id="${escapeHtml(
               item.id
-            )}" type="button">Audit</button>
+            )}" type="button">Open</button>
           </div>
         </td>
       </tr>`
@@ -1301,8 +1303,8 @@ const renderPastEncounters = (appointments) => {
       const appointmentId = button.getAttribute("data-audit-id");
       if (!appointmentId) return;
       state.selectedPastEncounterId = appointmentId;
-      loadPastEncounterAudit(appointmentId).catch((error) =>
-        addLog(`Unable to load encounter audit: ${error.message}`, "warn")
+      Promise.all([loadPastEncounterAudit(appointmentId), loadPastEncounterData(appointmentId)]).catch(
+        (error) => addLog(`Unable to load encounter details: ${error.message}`, "warn")
       );
     });
   });
@@ -1311,6 +1313,125 @@ const renderPastEncounters = (appointments) => {
     const count = Array.isArray(appointments) ? appointments.length : 0;
     ui.pastEncountersSummary.textContent = `${count} encounter${count === 1 ? "" : "s"}`;
   }
+};
+
+const buildUniqueCodes = (items = [], selector = (item) => item) =>
+  Array.from(
+    new Set(
+      items
+        .map((item) => String(selector(item) || "").trim().toUpperCase())
+        .filter(Boolean)
+    )
+  );
+
+const getActiveOrLatestNoteVersion = (appointment = {}) => {
+  const workflow = appointment?.noteWorkflow || {};
+  const versions = Array.isArray(workflow.versions) ? workflow.versions : [];
+  if (!versions.length) return null;
+  const current = versions.find((item) => item.versionId === workflow.currentVersionId);
+  return current || versions[versions.length - 1] || null;
+};
+
+const renderPastEncounterData = (appointment) => {
+  if (!ui.pastEncounterDataBody) return;
+  if (!appointment) {
+    if (ui.pastEncounterDataSummary) {
+      ui.pastEncounterDataSummary.textContent =
+        "Select an encounter to load transcript, recordings, notes, and codes.";
+    }
+    ui.pastEncounterDataBody.innerHTML = '<div class="tiny-note">No encounter selected.</div>';
+    return;
+  }
+
+  const transcriptSegments = Array.isArray(appointment.transcriptSegments)
+    ? appointment.transcriptSegments
+    : [];
+  const recordings = Array.isArray(appointment.recordings) ? appointment.recordings : [];
+  const suggestions = Array.isArray(appointment.suggestions) ? appointment.suggestions : [];
+  const icdSuggestions = Array.isArray(appointment.icdSuggestions) ? appointment.icdSuggestions : [];
+  const billableCodes = Array.isArray(appointment?.revenueTracker?.billableCodes)
+    ? appointment.revenueTracker.billableCodes
+    : [];
+  const noteVersion = getActiveOrLatestNoteVersion(appointment);
+  const noteContent = noteVersion?.contentJson || {};
+  const noteSections = noteContent.sections || {};
+  const noteText =
+    String(noteContent.freeTextAdditions || "").trim() ||
+    String(noteContent.additionalProviderNotes || "").trim() ||
+    [
+      noteSections.hpi,
+      noteSections.ros,
+      noteSections.exam,
+      noteSections.assessment,
+      noteSections.plan,
+    ]
+      .map((line) => String(line || "").trim())
+      .filter(Boolean)
+      .join("\n");
+
+  const transcriptPreview = transcriptSegments.length
+    ? transcriptSegments
+        .slice(-12)
+        .map((segment) => {
+          const seq = Number(segment.sequence || 0);
+          const source = String(segment.source || "transcript").trim();
+          const text = String(segment.cleanedText || segment.text || "").trim();
+          return `[${seq || "-"} | ${source}] ${text}`;
+        })
+        .join("\n")
+    : "No transcript segments saved.";
+
+  const recordingPreview = recordings.length
+    ? recordings
+        .map((item, index) => {
+          const provider = String(item.provider || "storage").trim();
+          const savedAt = formatDateTime(item.at || item.uploadedAt || "");
+          const expiresAt = item.retentionExpiresAt ? formatDateTime(item.retentionExpiresAt) : "n/a";
+          const location = String(item.location || item.blobName || "").trim();
+          const link =
+            location && /^https?:\/\//i.test(location) ? `\nLink: ${location}` : location ? `\nPath: ${location}` : "";
+          return `${index + 1}. ${provider} | Saved: ${savedAt} | Expires: ${expiresAt}${link}`;
+        })
+        .join("\n\n")
+    : "No recording metadata saved.";
+
+  const finalVersion = Array.isArray(appointment?.noteWorkflow?.versions)
+    ? appointment.noteWorkflow.versions.find(
+        (item) => item.versionId && item.versionId === appointment?.noteWorkflow?.finalizedVersionId
+      ) || null
+    : null;
+  const finalCodes = buildUniqueCodes(finalVersion?.finalCodes || []);
+  const suggestedCpt = buildUniqueCodes(suggestions, (item) => item?.code);
+  const suggestedIcd = buildUniqueCodes(icdSuggestions, (item) => item?.code);
+  const currentBillable = buildUniqueCodes(billableCodes, (item) => item?.code);
+
+  const section = (label, body) => `
+    <div class="audit-item">
+      <div class="meta">${escapeHtml(label)}</div>
+      <div class="body">${escapeHtml(body || "-")}</div>
+    </div>
+  `;
+
+  const notePreview = noteText || "No doctor note saved.";
+  const cptLine = currentBillable.length
+    ? `Current Billable CPT: ${currentBillable.join(", ")}`
+    : "Current Billable CPT: none";
+  const suggestedLine = suggestedCpt.length
+    ? `Suggested CPT: ${suggestedCpt.join(", ")}`
+    : "Suggested CPT: none";
+  const finalLine = finalCodes.length ? `Final CPT: ${finalCodes.join(", ")}` : "Final CPT: none";
+  const icdLine = suggestedIcd.length ? `Suggested ICD-10: ${suggestedIcd.join(", ")}` : "Suggested ICD-10: none";
+
+  if (ui.pastEncounterDataSummary) {
+    ui.pastEncounterDataSummary.textContent = `Loaded ${appointment.id} | Transcripts: ${transcriptSegments.length} | Recordings: ${recordings.length} | Note versions: ${Array.isArray(appointment?.noteWorkflow?.versions) ? appointment.noteWorkflow.versions.length : 0}`;
+  }
+
+  ui.pastEncounterDataBody.innerHTML = [
+    section("Doctor Note", notePreview),
+    section("Codes", [cptLine, suggestedLine, finalLine, icdLine].join("\n")),
+    section("Recordings", recordingPreview),
+    section("Transcription", transcriptPreview),
+  ].join("");
 };
 
 const renderBillingQueue = (queue = []) => {
@@ -1457,6 +1578,12 @@ const loadPastEncounterAudit = async (appointmentId) => {
   );
 };
 
+const loadPastEncounterData = async (appointmentId) => {
+  if (!appointmentId) return;
+  const payload = await api(`/api/appointments/${encodeURIComponent(appointmentId)}`);
+  renderPastEncounterData(payload?.appointment || null);
+};
+
 const loadPastEncounters = async () => {
   const query = new URLSearchParams();
   const q = String(ui.pastSearchInput?.value || "").trim();
@@ -1467,7 +1594,21 @@ const loadPastEncounters = async () => {
   if (dateTo) query.set("dateTo", dateTo);
   const suffix = query.toString() ? `?${query.toString()}` : "";
   const payload = await api(`/api/appointments${suffix}`);
-  renderPastEncounters(payload.appointments || []);
+  const appointments = Array.isArray(payload.appointments) ? payload.appointments : [];
+  renderPastEncounters(appointments);
+  if (!appointments.length) {
+    state.selectedPastEncounterId = "";
+    renderPastEncounterData(null);
+    if (ui.pastAuditSummary) {
+      ui.pastAuditSummary.textContent = "Select an encounter to load doctor activity.";
+    }
+    renderAuditItems(ui.pastEncounterAuditList, [], "No encounter selected.");
+  } else if (
+    state.selectedPastEncounterId &&
+    appointments.some((item) => item.id === state.selectedPastEncounterId)
+  ) {
+    loadPastEncounterData(state.selectedPastEncounterId).catch(() => {});
+  }
   state.loadedViewData.past = true;
 };
 

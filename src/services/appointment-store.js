@@ -1,13 +1,118 @@
 import crypto from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
 
 const appointments = new Map();
 const NOTE_FIELDS = ["hpi", "ros", "exam", "assessment", "plan"];
 const NOTE_EXTRA_FIELDS = ["additionalProviderNotes", "freeTextAdditions"];
 const BILLING_ACCESS_RETENTION_DAYS = 60;
 const BILLING_ACCESS_RETENTION_MS = BILLING_ACCESS_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+const APPOINTMENTS_STORE_PATH = path.resolve(process.cwd(), "data", "appointments.json");
 
 const roundMoney = (value) => Number(Number(value || 0).toFixed(2));
 const nowIso = () => new Date().toISOString();
+
+const ensureArray = (value) => (Array.isArray(value) ? value : []);
+
+const hydrateAppointmentRecord = (raw = {}) => {
+  const workflow = raw?.noteWorkflow || {};
+  return {
+    id: String(raw?.id || crypto.randomUUID()),
+    patientRef: String(raw?.patientRef || "anonymous").trim() || "anonymous",
+    patientChartId: String(raw?.patientChartId || "").trim(),
+    doctorRef: String(raw?.doctorRef || "").trim(),
+    doctorSpecialties: ensureArray(raw?.doctorSpecialties),
+    clientId: String(raw?.clientId || "default-clinic").trim().toLowerCase() || "default-clinic",
+    clientName: String(raw?.clientName || "Default Clinic").trim() || "Default Clinic",
+    insurancePlan: String(raw?.insurancePlan || "medicare").trim().toLowerCase() || "medicare",
+    visitType: String(raw?.visitType || "follow-up").trim().toLowerCase() || "follow-up",
+    encounterMode: String(raw?.encounterMode || "in-person").trim().toLowerCase() || "in-person",
+    telehealthPlatform: String(raw?.telehealthPlatform || "").trim().toLowerCase(),
+    consentGiven: Boolean(raw?.consentGiven),
+    consentFormId: String(raw?.consentFormId || "").trim(),
+    consentSignedAt: String(raw?.consentSignedAt || nowIso()).trim() || nowIso(),
+    accessPolicy: {
+      ownerRole: String(raw?.accessPolicy?.ownerRole || "doctor").trim() || "doctor",
+      patientAccess: Boolean(raw?.accessPolicy?.patientAccess),
+    },
+    createdAt: String(raw?.createdAt || nowIso()).trim() || nowIso(),
+    transcriptSegments: ensureArray(raw?.transcriptSegments),
+    suggestions: ensureArray(raw?.suggestions),
+    icdSuggestions: ensureArray(raw?.icdSuggestions),
+    liveInsights: {
+      missedBillables: ensureArray(raw?.liveInsights?.missedBillables),
+      documentationGaps: ensureArray(raw?.liveInsights?.documentationGaps),
+      documentationImprovements: ensureArray(raw?.liveInsights?.documentationImprovements),
+      chartNotes: ensureArray(raw?.liveInsights?.chartNotes),
+      realTimePrompts: ensureArray(raw?.liveInsights?.realTimePrompts),
+      latency: raw?.liveInsights?.latency || {},
+      lastUpdatedAt: raw?.liveInsights?.lastUpdatedAt || "",
+    },
+    revenueTracker: {
+      baseline: Number(raw?.revenueTracker?.baseline || 0),
+      compliantOpportunity: Number(raw?.revenueTracker?.compliantOpportunity || 0),
+      projectedTotal: Number(raw?.revenueTracker?.projectedTotal || 0),
+      payerMultiplier: Number(raw?.revenueTracker?.payerMultiplier || 1),
+      currentCodesRevenue: Number(raw?.revenueTracker?.currentCodesRevenue || 0),
+      suggestedCodesRevenue: Number(raw?.revenueTracker?.suggestedCodesRevenue || 0),
+      earnedNow: Number(raw?.revenueTracker?.earnedNow || 0),
+      projectedRevenueWithSuggestions: Number(raw?.revenueTracker?.projectedRevenueWithSuggestions || 0),
+      billableCodes: ensureArray(raw?.revenueTracker?.billableCodes),
+    },
+    analysisState: {
+      lastAiRunAt: Number(raw?.analysisState?.lastAiRunAt || 0),
+    },
+    recordings: ensureArray(raw?.recordings),
+    noteWorkflow: {
+      noteId: String(workflow?.noteId || crypto.randomUUID()),
+      status: String(workflow?.status || "draft"),
+      locked: Boolean(workflow?.locked),
+      currentVersionId: String(workflow?.currentVersionId || ""),
+      finalizedVersionId: String(workflow?.finalizedVersionId || ""),
+      finalizedAt: workflow?.finalizedAt || null,
+      versions: ensureArray(workflow?.versions),
+      currentAnalysis: workflow?.currentAnalysis || null,
+      overrideRecords: ensureArray(workflow?.overrideRecords),
+      delivery: {
+        ehrSentAt: workflow?.delivery?.ehrSentAt || null,
+        billingSentAt: workflow?.delivery?.billingSentAt || null,
+        billingAccessExpiresAt: workflow?.delivery?.billingAccessExpiresAt || null,
+        billingRetentionDays: Number(
+          workflow?.delivery?.billingRetentionDays || BILLING_ACCESS_RETENTION_DAYS
+        ),
+        ehrDestination: workflow?.delivery?.ehrDestination || "",
+        ehrExternalRecordId: workflow?.delivery?.ehrExternalRecordId || "",
+      },
+    },
+  };
+};
+
+const persistAppointments = () => {
+  try {
+    fs.mkdirSync(path.dirname(APPOINTMENTS_STORE_PATH), { recursive: true });
+    const snapshot = Array.from(appointments.values());
+    const payload = {
+      savedAt: nowIso(),
+      count: snapshot.length,
+      appointments: snapshot,
+    };
+    fs.writeFileSync(APPOINTMENTS_STORE_PATH, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+  } catch {}
+};
+
+const loadPersistedAppointments = () => {
+  try {
+    if (!fs.existsSync(APPOINTMENTS_STORE_PATH)) return;
+    const raw = fs.readFileSync(APPOINTMENTS_STORE_PATH, "utf8");
+    if (!raw) return;
+    const parsed = JSON.parse(raw);
+    const rows = Array.isArray(parsed) ? parsed : ensureArray(parsed?.appointments);
+    for (const item of rows) {
+      const hydrated = hydrateAppointmentRecord(item);
+      appointments.set(hydrated.id, hydrated);
+    }
+  } catch {}
+};
 
 const normalizeNoteValue = (value) => String(value || "").trim();
 const mergeProviderAdditions = (content = {}) =>
@@ -269,6 +374,8 @@ const buildAppointmentSummary = (appointment) => {
   };
 };
 
+loadPersistedAppointments();
+
 export const createAppointment = ({
   patientRef,
   patientChartId = "",
@@ -347,10 +454,15 @@ export const createAppointment = ({
     },
   };
   appointments.set(id, appointment);
+  persistAppointments();
   return appointment;
 };
 
 export const getAppointment = (appointmentId) => appointments.get(appointmentId);
+
+export const persistAppointmentStore = () => {
+  persistAppointments();
+};
 
 export const listAppointmentRecords = () => Array.from(appointments.values());
 
@@ -373,6 +485,7 @@ export const appendTranscriptSegment = (appointmentId, segment) => {
     at: new Date().toISOString(),
   };
   appointment.transcriptSegments.push(entry);
+  persistAppointments();
   return entry;
 };
 
@@ -400,6 +513,9 @@ export const addSuggestions = (appointmentId, suggestions, source) => {
     }));
 
   appointment.suggestions.push(...cleanSuggestions);
+  if (cleanSuggestions.length) {
+    persistAppointments();
+  }
   return {
     appointment,
     newlyAdded: cleanSuggestions,
@@ -420,6 +536,9 @@ export const addIcdSuggestions = (appointmentId, suggestions, source) => {
     }));
 
   appointment.icdSuggestions.push(...cleanSuggestions);
+  if (cleanSuggestions.length) {
+    persistAppointments();
+  }
   return {
     appointment,
     newlyAdded: cleanSuggestions,
@@ -430,6 +549,7 @@ export const setRevenueTracker = (appointmentId, tracker) => {
   const appointment = getAppointment(appointmentId);
   if (!appointment) return null;
   appointment.revenueTracker = tracker;
+  persistAppointments();
   return appointment;
 };
 
@@ -440,6 +560,7 @@ export const setLiveInsights = (appointmentId, insights) => {
     ...(appointment.liveInsights || {}),
     ...(insights || {}),
   };
+  persistAppointments();
   return appointment.liveInsights;
 };
 
@@ -450,6 +571,7 @@ export const addRecording = (appointmentId, recordingInfo) => {
     ...recordingInfo,
     at: new Date().toISOString(),
   });
+  persistAppointments();
   return appointment;
 };
 
@@ -477,6 +599,7 @@ export const ensureNoteDraftVersion = (appointmentId) => {
   workflow.currentVersionId = aiVersion.versionId;
   workflow.status = "draft";
   workflow.locked = false;
+  persistAppointments();
   return aiVersion;
 };
 
@@ -509,6 +632,7 @@ export const setCurrentNoteAnalysis = (appointmentId, analysis) => {
     ...(analysis || {}),
     generatedAt: nowIso(),
   };
+  persistAppointments();
   return appointment.noteWorkflow.currentAnalysis;
 };
 
@@ -567,6 +691,7 @@ export const upsertDraftNoteVersion = ({
     workflow.finalizedVersionId = "";
     workflow.finalizedAt = null;
   }
+  persistAppointments();
   return {
     appointment,
     version: nextVersion,
@@ -628,6 +753,7 @@ export const finalizeCurrentNote = ({
     billingAccessExpiresAt,
     billingRetentionDays: BILLING_ACCESS_RETENTION_DAYS,
   };
+  persistAppointments();
   return {
     appointment,
     version: finalizedVersion,
@@ -755,5 +881,6 @@ export const addOverrideRecord = ({
     ? appointment.noteWorkflow.overrideRecords
     : [];
   appointment.noteWorkflow.overrideRecords = [record, ...existing].slice(0, 300);
+  persistAppointments();
   return record;
 };

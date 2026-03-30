@@ -14,6 +14,7 @@ import {
   getCurrentNoteVersion,
   getFinalizedNotePacket,
   getAppointment,
+  persistAppointmentStore,
   listAppointmentRecords,
   listNoteVersions,
   listAppointments,
@@ -913,6 +914,7 @@ router.post(
         ...(result.delivery || {}),
         ...appointment.noteWorkflow.delivery,
       };
+      persistAppointmentStore();
     }
 
     broadcastAppointmentEvent(appointment.id, "note.finalized", {

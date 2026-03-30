@@ -25,6 +25,7 @@ HIPAA-first medical AI assistant prototype for live doctor-patient encounters.
 - Audio recording storage (Azure Blob + local fallback)
 - Encounter audio recording auto-starts when doctor starts the encounter
 - Recording retention metadata is set to 60 days by default
+- Appointment persistence to `data/appointments.json` (transcripts, notes, coding output, and recording metadata)
 - SSE streaming channel for real-time backend analysis updates
 - Production readiness tracker for BAAs, security hardening, and legal/compliance approvals
 

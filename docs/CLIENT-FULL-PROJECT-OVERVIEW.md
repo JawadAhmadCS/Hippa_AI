@@ -1,7 +1,7 @@
 # Helix Revenue Copilot - Full Client Project Overview
 
 Last updated: 2026-03-27  
-Environment: Prototype (single Node.js app, SPA frontend, in-memory encounter runtime state)
+Environment: Prototype (single Node.js app, SPA frontend, file-backed encounter runtime state)
 
 ## 1) Executive Summary
 
@@ -69,7 +69,7 @@ The following requested changes are now represented in the prototype scope:
   - Browser speech fallback
   - AWS Transcribe Medical event ingestion endpoint
 - Storage:
-  - Appointment runtime: in-memory map
+  - Appointment runtime: in-process map with file persistence to `data/appointments.json`
   - Platform config: `data/platform-config.json`
   - Audit log: `data/audit-log.ndjson` (hash chained)
   - Auth users: `data/auth-users.json`
@@ -360,14 +360,14 @@ APIs:
 
 ## 15) Current Limitations (Important for Client Transparency)
 
-- Encounter runtime state is in-memory (`appointment-store`), so encounter data is not durable across server restarts.
+- Encounter runtime state is persisted to `data/appointments.json` (`appointment-store`), so encounter data survives server restarts in this environment.
 - EHR/billing delivery is represented as internal finalized packet workflow (not a full external EHR integration adapter yet).
 - SMS delivery is prototype-mode (production carrier integration still required).
 - Prototype includes compliance controls and auditability, but formal production/legal certification steps remain in readiness workflow.
 
 ## 16) Recommended Next Steps Before Production Rollout
 
-1. Replace in-memory encounter store with persistent database (versioned note tables + audit index).
+1. Replace file-backed encounter store with production database (versioned note tables + audit index).
 2. Add enterprise identity integration (SSO/IdP), enforced MFA policy at org level.
 3. Implement external EHR and billing connector adapters with retry + DLQ behavior.
 4. Add immutable external audit export/SIEM sink.
