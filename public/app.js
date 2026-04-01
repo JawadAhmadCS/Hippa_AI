@@ -399,6 +399,22 @@ const formatDateOnly = (value) => {
   return parsed.toLocaleDateString();
 };
 
+const normalizeCode = (value) => String(value || "").trim().toUpperCase();
+const looksLikeCptCode = (value) => /^\d{5}$/.test(normalizeCode(value));
+const looksLikeIcd10Code = (value) =>
+  /^[A-TV-Z][0-9][0-9A-Z](?:\.[0-9A-Z]{1,4})?$/.test(normalizeCode(value));
+const uniqueCodes = (values = []) => {
+  const seen = new Set();
+  const out = [];
+  for (const item of values) {
+    const normalized = normalizeCode(item);
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    out.push(normalized);
+  }
+  return out;
+};
+
 const setTextContent = (element, value) => {
   if (!element) return;
   const normalized = String(value || "").trim();
@@ -1526,20 +1542,24 @@ const renderBillingQueue = (queue = []) => {
     .map(
       (item) => {
         const patientProfile = normalizePatientProfile(item?.patientProfile || {}, item?.patientRef || "");
-        const patientLabel =
-          [patientProfile.firstName, patientProfile.lastName].filter(Boolean).join(" ") ||
-          patientProfile.patientRef ||
-          "-";
+        const firstName = patientProfile.firstName || "-";
+        const lastName = patientProfile.lastName || "-";
+        const dob = patientProfile.dob ? formatDateOnly(patientProfile.dob) : "-";
+        const appointmentTime = formatDateTime(item?.appointmentTime || item?.finalizedAt);
         return `
       <tr>
         <td>
-          <div class="table-code-pill">${escapeHtml(item.appointmentId || "-")}</div>
-          <div class="tiny-note">${escapeHtml(patientLabel)}</div>
+          <button class="btn btn-ghost" type="button" data-billing-open="${escapeHtml(
+            item.appointmentId
+          )}" style="height:30px;padding:0 10px;">
+            ${escapeHtml(item.appointmentId || "-")}
+          </button>
         </td>
-        <td>${escapeHtml(formatDateTime(item.finalizedAt))}</td>
+        <td>${escapeHtml(firstName)}</td>
+        <td>${escapeHtml(lastName)}</td>
+        <td>${escapeHtml(dob)}</td>
+        <td>${escapeHtml(appointmentTime)}</td>
         <td>${escapeHtml(formatCurrency(item.expectedRevenueFromAppointment || 0))}</td>
-        <td>${escapeHtml((item.approvedCodes || []).join(", ") || "-")}</td>
-        <td>${escapeHtml(`${Math.round(Number(item.confidence || 0) * 100)}%`)}</td>
         <td><button class="btn btn-ghost" type="button" data-billing-open="${escapeHtml(
           item.appointmentId
         )}" style="height:30px;padding:0 10px;">Open</button></td>
@@ -1548,7 +1568,7 @@ const renderBillingQueue = (queue = []) => {
     )
     .join("");
 
-  renderTableBody(ui.billingQueueBody, rowsHtml, 6, "No finalized notes available.");
+  renderTableBody(ui.billingQueueBody, rowsHtml, 7, "No finalized notes available.");
   if (ui.billingQueueSummary) {
     ui.billingQueueSummary.textContent = `${state.billing.queue.length} finalized encounter${
       state.billing.queue.length === 1 ? "" : "s"
@@ -1577,12 +1597,14 @@ const loadBillingFinalNote = async (appointmentId) => {
   const noteContent = payload?.finalVersion?.contentJson || {};
   const preview = buildProviderNoteText(noteContent) || "No finalized merged note available.";
   const patientProfile = normalizePatientProfile(payload?.patientProfile || {}, payload?.patientRef || "");
+  const appointmentTime = formatDateTime(payload?.appointmentTime || payload?.finalizedAt);
   const patientSummary = [
     patientProfile.patientRef ? `Ref: ${patientProfile.patientRef}` : "",
     patientProfile.externalChartId ? `Chart: ${patientProfile.externalChartId}` : "",
     patientProfile.fullName ? `Name: ${patientProfile.fullName}` : "",
     patientProfile.dob ? `DOB: ${formatDateOnly(patientProfile.dob)}` : "",
     patientProfile.insuranceInfo ? `Insurance: ${toInsuranceLabel(patientProfile.insuranceInfo)}` : "",
+    appointmentTime && appointmentTime !== "-" ? `Appointment Time: ${appointmentTime}` : "",
   ]
     .filter(Boolean)
     .join(" | ");
@@ -1602,9 +1624,9 @@ const loadBillingFinalNote = async (appointmentId) => {
   );
 
   if (ui.billingExpectedRevenue) {
-    ui.billingExpectedRevenue.textContent = `Current: ${formatCurrency(
-      currentRevenue
-    )} | Potential: ${formatCurrency(potentialRevenue)}`;
+    ui.billingExpectedRevenue.textContent = formatCurrency(
+      payload?.expectedRevenueFromAppointment ?? potentialRevenue ?? currentRevenue ?? 0
+    );
   }
   if (ui.billingPatientChartPreview) {
     ui.billingPatientChartPreview.textContent = patientSummary || "Patient chart summary unavailable.";
@@ -1612,27 +1634,24 @@ const loadBillingFinalNote = async (appointmentId) => {
   if (ui.billingFinalNotePreview) {
     ui.billingFinalNotePreview.textContent = preview;
   }
-  renderCodePillsWithEvidence({
-    container: ui.billingRecommendedCpt,
-    items: Array.isArray(payload?.recommendedCptCodes) ? payload.recommendedCptCodes : [],
-    emptyText: "No CPT recommendations loaded.",
-    keyPrefix: "billing-cpt",
-    subtitleBuilder: (item) =>
-      item.mdmJustification ||
-      item.rationale ||
-      item.evidence ||
-      "Recommended CPT code with supporting transcript/chart-note references.",
-  });
-  renderCodePillsWithEvidence({
-    container: ui.billingRecommendedIcd,
-    items: Array.isArray(payload?.recommendedIcd10Codes) ? payload.recommendedIcd10Codes : [],
-    emptyText: "No ICD-10 recommendations loaded.",
-    keyPrefix: "billing-icd",
-    subtitleBuilder: (item) =>
-      item.rationale ||
-      item.evidence ||
-      "Recommended ICD-10 code with supporting transcript/chart-note references.",
-  });
+  const recommendedCptCodes = Array.isArray(payload?.recommendedCptCodes)
+    ? payload.recommendedCptCodes.map((item) => normalizeCode(item?.code))
+    : [];
+  const recommendedIcd10Codes = Array.isArray(payload?.recommendedIcd10Codes)
+    ? payload.recommendedIcd10Codes.map((item) => normalizeCode(item?.code))
+    : [];
+  const approvedCodes = Array.isArray(payload?.approvedCodes) ? payload.approvedCodes.map(normalizeCode) : [];
+  const allCptCodes = uniqueCodes([
+    ...recommendedCptCodes,
+    ...approvedCodes.filter((code) => looksLikeCptCode(code)),
+  ]);
+  const allIcdCodes = uniqueCodes([
+    ...recommendedIcd10Codes,
+    ...approvedCodes.filter((code) => looksLikeIcd10Code(code)),
+  ]);
+
+  renderSimplePills(ui.billingRecommendedCpt, allCptCodes, "No CPT codes loaded.");
+  renderSimplePills(ui.billingRecommendedIcd, allIcdCodes, "No ICD-10 codes loaded.");
   renderSimplePills(ui.billingApprovedCodes, payload.approvedCodes || [], "No approved codes.");
   const transcriptPreview = Array.isArray(payload?.transcriptSegments)
     ? payload.transcriptSegments

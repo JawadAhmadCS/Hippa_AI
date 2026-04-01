@@ -920,6 +920,7 @@ export const getFinalizedNotePacket = (appointmentId) => {
 
   return {
     appointmentId: appointment.id,
+    appointmentTime: appointment.createdAt || null,
     patientRef: appointment.patientRef,
     patientProfile,
     patientChartId: appointment.patientChartId || "",

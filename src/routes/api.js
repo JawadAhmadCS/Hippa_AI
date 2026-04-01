@@ -1046,6 +1046,7 @@ router.get(
       .filter((packet) => !packet.billingAccessExpired)
       .map((packet) => ({
         appointmentId: packet.appointmentId,
+        appointmentTime: packet.appointmentTime || null,
         patientRef: packet.patientRef,
         patientProfile: packet.patientProfile || {},
         patientChartId: packet.patientChartId,
