@@ -152,6 +152,59 @@ const normalizeDateOrNull = (value) => {
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 };
 
+const splitFullName = (value = "") => {
+  const parts = String(value || "")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  if (!parts.length) {
+    return {
+      firstName: "",
+      lastName: "",
+    };
+  }
+  if (parts.length === 1) {
+    return {
+      firstName: parts[0],
+      lastName: "",
+    };
+  }
+  return {
+    firstName: parts[0],
+    lastName: parts.slice(1).join(" "),
+  };
+};
+
+const toInsuranceLabel = (value = "") => {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (!normalized) return "";
+  return normalized
+    .split(/[-_\s]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+};
+
+const buildPatientProfileForAppointment = ({
+  chartPatient = null,
+  patientRef = "",
+  insurancePlan = "",
+} = {}) => {
+  const fullName = String(chartPatient?.fullName || "").trim();
+  const split = splitFullName(fullName);
+  return {
+    patientRef: String(chartPatient?.patientRef || patientRef || "")
+      .trim()
+      .toUpperCase(),
+    externalChartId: String(chartPatient?.externalChartId || "").trim().toUpperCase(),
+    fullName,
+    firstName: split.firstName,
+    lastName: split.lastName,
+    dob: String(chartPatient?.dob || "").trim(),
+    insuranceInfo: toInsuranceLabel(insurancePlan),
+  };
+};
+
 const filterAppointments = ({
   search = "",
   dateFrom = "",
@@ -172,6 +225,10 @@ const filterAppointments = ({
       const haystack = [
         appointment.id,
         appointment.patientRef,
+        appointment.patientFirstName,
+        appointment.patientLastName,
+        appointment.patientDob,
+        appointment.patientInsuranceInfo,
         appointment.doctorRef,
         appointment.insurancePlan,
         appointment.visitType,
@@ -629,6 +686,14 @@ router.post(
       encounterMode === "telehealth"
         ? String(request.body.telehealthPlatform || "generic").trim().toLowerCase()
         : "";
+    const insurancePlan = String(request.body.insurancePlan || "medicare")
+      .trim()
+      .toLowerCase();
+    const patientProfile = buildPatientProfileForAppointment({
+      chartPatient,
+      patientRef,
+      insurancePlan,
+    });
 
     if (!doctorRef) {
       response.status(400).json({ error: "Doctor reference is required." });
@@ -644,12 +709,13 @@ router.post(
 
     const appointment = createAppointment({
       patientRef,
+      patientProfile,
       patientChartId,
       doctorRef,
       doctorSpecialties: Array.isArray(request.auth.specialties) ? request.auth.specialties : [],
       clientId: request.auth.clientId || "default-clinic",
       clientName: request.auth.clientName || "Default Clinic",
-      insurancePlan: request.body.insurancePlan || "medicare",
+      insurancePlan,
       visitType: request.body.visitType || "follow-up",
       encounterMode,
       telehealthPlatform,
@@ -661,6 +727,7 @@ router.post(
     fireAndForgetAudit("appointment.created", {
       appointmentId: appointment.id,
       patientRef: appointment.patientRef,
+      patientProfile: appointment.patientProfile,
       patientChartId: appointment.patientChartId,
       doctorRef: appointment.doctorRef,
       doctorSpecialties: appointment.doctorSpecialties,
@@ -980,6 +1047,7 @@ router.get(
       .map((packet) => ({
         appointmentId: packet.appointmentId,
         patientRef: packet.patientRef,
+        patientProfile: packet.patientProfile || {},
         patientChartId: packet.patientChartId,
         doctorRef: packet.doctorRef,
         encounterMode: packet.encounterMode,
@@ -987,6 +1055,7 @@ router.get(
         noteId: packet.noteId,
         finalizedAt: packet.finalizedAt,
         expectedRevenueFromAppointment: Number(packet.expectedRevenueFromAppointment || 0),
+        mergedRevenue: packet.mergedRevenue || null,
         billingAccessExpiresAt: packet.billingAccessExpiresAt,
         approvedCodes: packet.approvedCodes || [],
         confidence: packet.codingAnalysis?.confidence || 0,

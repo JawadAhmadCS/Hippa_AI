@@ -46,7 +46,8 @@ const sanitizeDeterministic = (rawText) => {
     };
   }
 
-  const normalized = text.charAt(0).toUpperCase() + text.slice(1).replace(/\s+/g, " ").trim();
+  const collapsed = text.replace(/\s+/g, " ").trim();
+  const normalized = collapsed.charAt(0).toUpperCase() + collapsed.slice(1);
   const confidence = replacements > 0 ? 0.78 : 0.92;
 
   return {

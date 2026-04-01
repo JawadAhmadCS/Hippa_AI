@@ -247,6 +247,84 @@
     /* ── CONTENT ── */
     .content { padding: 24px 28px; display: flex; flex-direction: column; gap: 20px; }
 
+    .top-strips {
+      display: grid;
+      grid-template-columns: 1.4fr 1fr;
+      gap: 14px;
+    }
+
+    .summary-strip {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      box-shadow: var(--shadow-sm);
+      padding: 14px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .summary-strip-title {
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--text-muted);
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      font-family: var(--mono);
+    }
+
+    .patient-strip-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .summary-cell {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 8px 10px;
+      min-height: 58px;
+    }
+
+    .summary-cell-label {
+      font-size: 10px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      font-family: var(--mono);
+      margin-bottom: 4px;
+    }
+
+    .summary-cell-value {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text);
+      line-height: 1.35;
+      word-break: break-word;
+    }
+
+    .revenue-strip-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+
+    .revenue-mini {
+      border-radius: var(--radius-md);
+      border: 1px solid var(--border);
+      padding: 10px 12px;
+      background: linear-gradient(180deg, #ffffff, #f8fafc);
+    }
+
+    .revenue-mini .metric-label {
+      margin-bottom: 6px;
+    }
+
+    .revenue-mini .metric-value {
+      font-size: 24px;
+    }
+
     /* ── ENCOUNTER SETUP CARD ── */
     .setup-card {
       background: var(--surface);
@@ -689,7 +767,7 @@
     /* ── REVENUE SECTION ── */
     .revenue-section {
       display: grid;
-      grid-template-columns: 1fr 1.8fr;
+      grid-template-columns: 1fr;
       gap: 16px;
     }
 
@@ -1307,6 +1385,7 @@
     /* ── RESPONSIVE ── */
     @media (max-width: 1200px) {
       .workspace { grid-template-columns: 1fr 1fr; }
+      .top-strips { grid-template-columns: 1fr; }
       .form-grid { grid-template-columns: 1fr 1fr; }
     }
 
@@ -1318,6 +1397,7 @@
     @media (max-width: 700px) {
       .content { padding: 16px; }
       .workspace { grid-template-columns: 1fr; }
+      .patient-strip-grid { grid-template-columns: 1fr 1fr; }
       .form-grid { grid-template-columns: 1fr; }
       .metrics-grid { grid-template-columns: 1fr 1fr; }
       .stats-grid { grid-template-columns: 1fr; }
@@ -1325,6 +1405,13 @@
       .codebook-layout { grid-template-columns: 1fr; }
       .filters-row { grid-template-columns: 1fr; }
       .split-two { grid-template-columns: 1fr; }
+    }
+
+    @media (max-width: 640px) {
+      .patient-strip-grid,
+      .revenue-strip-grid {
+        grid-template-columns: 1fr;
+      }
     }
   </style>
 </head>
@@ -1383,8 +1470,8 @@
       <div class="doctor-pill">
         <div class="doctor-avatar">Dr</div>
         <div class="doctor-info">
-          <div class="doctor-name">Dr. Sarah Ahmed</div>
-          <div class="doctor-role">Attending Physician</div>
+          <div class="doctor-name" id="sidebarDoctorName">Dr. Sarah Ahmed</div>
+          <div class="doctor-role" id="sidebarDoctorRole">Attending Physician</div>
         </div>
       </div>
     </div>
@@ -1417,6 +1504,42 @@
 
     <!-- CONTENT -->
     <div class="content view-panel active" id="view-live">
+      <div class="top-strips">
+        <div class="summary-strip">
+          <div class="summary-strip-title">Patient Snapshot</div>
+          <div class="patient-strip-grid">
+            <div class="summary-cell">
+              <div class="summary-cell-label">First Name</div>
+              <div class="summary-cell-value" id="patientHeaderFirstName">-</div>
+            </div>
+            <div class="summary-cell">
+              <div class="summary-cell-label">Last Name</div>
+              <div class="summary-cell-value" id="patientHeaderLastName">-</div>
+            </div>
+            <div class="summary-cell">
+              <div class="summary-cell-label">DOB</div>
+              <div class="summary-cell-value" id="patientHeaderDob">-</div>
+            </div>
+            <div class="summary-cell">
+              <div class="summary-cell-label">Insurance</div>
+              <div class="summary-cell-value" id="patientHeaderInsurance">-</div>
+            </div>
+          </div>
+        </div>
+        <div class="summary-strip">
+          <div class="summary-strip-title">Revenue Estimate</div>
+          <div class="revenue-strip-grid">
+            <div class="revenue-mini">
+              <div class="metric-label"><span class="metric-label-dot" style="background:#0f8b7b"></span>Current Estimated Revenue</div>
+              <div class="metric-value green" id="currentEstimatedRevenue">$0.00</div>
+            </div>
+            <div class="revenue-mini">
+              <div class="metric-label"><span class="metric-label-dot" style="background:#2563eb"></span>Potential Estimated Revenue</div>
+              <div class="metric-value blue" id="potentialEstimatedRevenue">$0.00</div>
+            </div>
+          </div>
+        </div>
+      </div>
 
       <!-- ENCOUNTER SETUP -->
       <div class="setup-card">
@@ -1431,10 +1554,6 @@
         </div>
         <div class="setup-body">
           <div class="form-grid">
-            <div class="form-field">
-              <label class="form-label" for="doctorRef">Doctor ID</label>
-              <input class="form-input" id="doctorRef" placeholder="Auto-filled from login" readonly />
-            </div>
             <div class="form-field">
               <label class="form-label" for="patientRef">Patient Reference</label>
               <div class="inline-actions">
@@ -1537,15 +1656,16 @@
           <div class="panel-header">
             <div class="panel-title">
               <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-              Compliance Guidance
+              Manual Doctor Notes
             </div>
-            <span class="panel-badge active" id="guidanceBadge">AI Live</span>
+            <span class="panel-badge active" id="guidanceBadge">Editable</span>
           </div>
-          <div class="panel-body" id="guidanceList" style="max-height:160px;">
-            <div class="empty-state">
-              <svg width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0 1 12 2.944a11.955 11.955 0 0 1-8.618 3.04A12.02 12.02 0 0 0 3 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
-              <p>Compliance prompts will appear here</p>
+          <div class="panel-body" id="guidanceList" style="max-height:220px;">
+            <div class="form-field">
+              <label class="form-label" for="manualDoctorNotesInput">Manual Doctor Notes</label>
+              <textarea class="form-input" id="manualDoctorNotesInput" rows="8" style="height:auto;padding:10px;" placeholder="Capture your manual notes here. These notes are merged into the final chart note."></textarea>
             </div>
+            <div class="tiny-note" id="noteMergeStatus">Add manual notes here. The merged final chart note stays editable below before finalization.</div>
           </div>
           <div class="divider"></div>
           <div class="panel-body" id="chatFeed" style="max-height:140px;">
@@ -1593,12 +1713,12 @@
         </div>
         <div class="setup-body settings-grid">
           <div class="info-card">
-            <h3>Doctor Notes</h3>
+            <h3>Final Notes (Merged AI + Manual)</h3>
             <div class="form-field">
-              <label class="form-label" for="noteManualNotes">Doctor Notes</label>
-              <textarea class="form-input" id="noteManualNotes" rows="8" style="height:auto;padding:10px;" placeholder="Type your notes in plain language. AI will incorporate these notes into chart notes, recommendations, and coding suggestions."></textarea>
+              <label class="form-label" for="noteFinalMergedEditor">Merged Final Notes</label>
+              <textarea class="form-input" id="noteFinalMergedEditor" rows="10" style="height:auto;padding:10px;" placeholder="Review and edit the merged final chart note before finalizing."></textarea>
             </div>
-            <div class="tiny-note" id="noteMergeStatus">Type and save once. AI uses these notes for chart summary, next-step recommendations, and code suggestions.</div>
+            <div class="tiny-note" id="noteFinalStatus">After the appointment ends, edit this final section and click Finalize to publish to Billing + EHR.</div>
           </div>
           <div class="info-card">
             <h3>Coding + Documentation Support</h3>
@@ -1626,37 +1746,6 @@
 
       <!-- REVENUE SECTION -->
       <div class="revenue-section">
-
-        <!-- Metric Tiles -->
-        <div class="metrics-grid">
-          <div class="metric-tile">
-            <div class="metric-label"><span class="metric-label-dot" style="background:#94a3b8"></span>Current Codes Revenue</div>
-            <div class="metric-value" id="baselineRevenue">$0</div>
-            <div class="metric-change">Revenue from current coded baseline</div>
-          </div>
-          <div class="metric-tile">
-            <div class="metric-label"><span class="metric-label-dot" style="background:#059669"></span>Suggested Codes Opportunity</div>
-            <div class="metric-value green" id="opportunityRevenue">$0</div>
-            <div class="metric-change up" id="oppChange">-</div>
-          </div>
-          <div class="metric-tile">
-            <div class="metric-label"><span class="metric-label-dot" style="background:#2563eb"></span>Earned This Session</div>
-            <div class="metric-value blue" id="earnedNowRevenue">$0</div>
-            <div class="metric-change" id="earnedChange">-</div>
-          </div>
-          <div class="metric-tile">
-            <div class="metric-label"><span class="metric-label-dot" style="background:#0f172a"></span>Current + Suggested Potential</div>
-            <div class="metric-value" id="projectedRevenue">$0</div>
-            <div class="metric-change">Projected with accepted suggested codes</div>
-          </div>
-          <div class="multiplier-tile">
-            <div class="multiplier-info">
-              <div class="multiplier-label">Payer Multiplier</div>
-              <div class="multiplier-sub" id="multiplierDesc">Select insurance plan</div>
-            </div>
-            <div class="multiplier-value" id="payerMultiplier">×1.00</div>
-          </div>
-        </div>
 
         <!-- Billable Codes Table -->
         <div class="billable-panel">
@@ -1721,12 +1810,17 @@
               </table>
             </div>
             <div class="info-card">
-              <h3>AI Chart Notes (Finalized by Doctor)</h3>
-              <div class="helper-text">Expected Revenue from Appointment</div>
+              <h3>Finalized Encounter Packet</h3>
+              <div class="helper-text">Patient Chart Summary</div>
+              <div class="tiny-note" id="billingPatientChartPreview">Select a finalized item from queue.</div>
+              <div class="helper-text" style="margin-top:12px;">Merged Final Revenue Estimate</div>
               <div class="tiny-note" id="billingExpectedRevenue">$0.00</div>
+              <div class="helper-text" style="margin-top:12px;">Final Merged Notes (Manual + AI)</div>
               <div class="tiny-note" id="billingFinalNotePreview">Select a finalized item from queue.</div>
-              <div class="helper-text" style="margin-top:12px;">Transcript Excerpts (View Only)</div>
+              <div class="helper-text" style="margin-top:12px;">Transcription Excerpts (View Only)</div>
               <div class="tiny-note" id="billingTranscriptPreview">No transcript excerpts loaded.</div>
+              <div class="helper-text" style="margin-top:12px;">Appointment Audio Recording</div>
+              <div class="tiny-note" id="billingAudioPreview">No audio recordings loaded.</div>
               <div class="helper-text" style="margin-top:12px;">Recommended CPT Codes (with references)</div>
               <div class="pill-list" id="billingRecommendedCpt"><span class="pill">No CPT recommendations loaded.</span></div>
               <div class="helper-text" style="margin-top:12px;">Recommended ICD-10 Codes (with references)</div>

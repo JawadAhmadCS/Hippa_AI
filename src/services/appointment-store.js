@@ -13,18 +13,79 @@ const roundMoney = (value) => Number(Number(value || 0).toFixed(2));
 const nowIso = () => new Date().toISOString();
 
 const ensureArray = (value) => (Array.isArray(value) ? value : []);
+const splitFullName = (value = "") => {
+  const parts = String(value || "")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  if (!parts.length) {
+    return {
+      firstName: "",
+      lastName: "",
+    };
+  }
+  if (parts.length === 1) {
+    return {
+      firstName: parts[0],
+      lastName: "",
+    };
+  }
+  return {
+    firstName: parts[0],
+    lastName: parts.slice(1).join(" "),
+  };
+};
+
+const normalizePatientProfile = ({
+  patientProfile = {},
+  patientRef = "",
+  insurancePlan = "",
+} = {}) => {
+  const fallbackFullName = [patientProfile?.firstName, patientProfile?.lastName]
+    .map((item) => String(item || "").trim())
+    .filter(Boolean)
+    .join(" ")
+    .trim();
+  const fullName = String(patientProfile?.fullName || fallbackFullName || "").trim();
+  const split = splitFullName(fullName);
+  const firstName = String(patientProfile?.firstName || split.firstName || "").trim();
+  const lastName = String(patientProfile?.lastName || split.lastName || "").trim();
+  const normalizedInsurance = String(patientProfile?.insuranceInfo || insurancePlan || "").trim();
+
+  return {
+    patientRef: String(patientProfile?.patientRef || patientRef || "")
+      .trim()
+      .toUpperCase(),
+    externalChartId: String(patientProfile?.externalChartId || "")
+      .trim()
+      .toUpperCase(),
+    fullName: fullName || [firstName, lastName].filter(Boolean).join(" ").trim(),
+    firstName,
+    lastName,
+    dob: String(patientProfile?.dob || "").trim(),
+    insuranceInfo: normalizedInsurance,
+  };
+};
 
 const hydrateAppointmentRecord = (raw = {}) => {
   const workflow = raw?.noteWorkflow || {};
+  const normalizedInsurancePlan =
+    String(raw?.insurancePlan || "medicare").trim().toLowerCase() || "medicare";
+  const patientProfile = normalizePatientProfile({
+    patientProfile: raw?.patientProfile || {},
+    patientRef: raw?.patientRef || "anonymous",
+    insurancePlan: normalizedInsurancePlan,
+  });
   return {
     id: String(raw?.id || crypto.randomUUID()),
     patientRef: String(raw?.patientRef || "anonymous").trim() || "anonymous",
+    patientProfile,
     patientChartId: String(raw?.patientChartId || "").trim(),
     doctorRef: String(raw?.doctorRef || "").trim(),
     doctorSpecialties: ensureArray(raw?.doctorSpecialties),
     clientId: String(raw?.clientId || "default-clinic").trim().toLowerCase() || "default-clinic",
     clientName: String(raw?.clientName || "Default Clinic").trim() || "Default Clinic",
-    insurancePlan: String(raw?.insurancePlan || "medicare").trim().toLowerCase() || "medicare",
+    insurancePlan: normalizedInsurancePlan,
     visitType: String(raw?.visitType || "follow-up").trim().toLowerCase() || "follow-up",
     encounterMode: String(raw?.encounterMode || "in-person").trim().toLowerCase() || "in-person",
     telehealthPlatform: String(raw?.telehealthPlatform || "").trim().toLowerCase(),
@@ -345,10 +406,20 @@ const buildAppointmentSummary = (appointment) => {
     ? appointment.revenueTracker.billableCodes
     : [];
   const finalCptCodes = billableCodes.map((item) => item.code).filter(Boolean);
+  const patientProfile = normalizePatientProfile({
+    patientProfile: appointment.patientProfile || {},
+    patientRef: appointment.patientRef,
+    insurancePlan: appointment.insurancePlan,
+  });
 
   return {
     id: appointment.id,
     patientRef: appointment.patientRef,
+    patientProfile,
+    patientFirstName: patientProfile.firstName,
+    patientLastName: patientProfile.lastName,
+    patientDob: patientProfile.dob,
+    patientInsuranceInfo: patientProfile.insuranceInfo,
     patientChartId: appointment.patientChartId,
     doctorRef: appointment.doctorRef,
     doctorSpecialties: Array.isArray(appointment.doctorSpecialties) ? appointment.doctorSpecialties : [],
@@ -378,6 +449,7 @@ loadPersistedAppointments();
 
 export const createAppointment = ({
   patientRef,
+  patientProfile = {},
   patientChartId = "",
   doctorRef,
   doctorSpecialties = [],
@@ -392,9 +464,16 @@ export const createAppointment = ({
   consentSignedAt,
 }) => {
   const id = crypto.randomUUID();
+  const normalizedInsurancePlan = String(insurancePlan || "medicare").trim().toLowerCase() || "medicare";
+  const normalizedPatientProfile = normalizePatientProfile({
+    patientProfile,
+    patientRef,
+    insurancePlan: normalizedInsurancePlan,
+  });
   const appointment = {
     id,
     patientRef,
+    patientProfile: normalizedPatientProfile,
     patientChartId: String(patientChartId || "").trim(),
     doctorRef,
     doctorSpecialties: Array.isArray(doctorSpecialties)
@@ -402,7 +481,7 @@ export const createAppointment = ({
       : [],
     clientId: String(clientId || "default-clinic").trim().toLowerCase(),
     clientName: String(clientName || "Default Clinic").trim(),
-    insurancePlan: insurancePlan || "medicare",
+    insurancePlan: normalizedInsurancePlan,
     visitType: visitType || "follow-up",
     encounterMode: String(encounterMode || "in-person").trim().toLowerCase(),
     telehealthPlatform: String(telehealthPlatform || "").trim().toLowerCase(),
@@ -817,13 +896,32 @@ export const getFinalizedNotePacket = (appointmentId) => {
       estimatedAmount: Number(billableMatch?.estimatedAmount || 0),
     };
   });
-  const expectedRevenueFromAppointment = roundMoney(
-    appointment.revenueTracker?.projectedTotal || appointment.revenueTracker?.earnedNow || 0
+  const analysisRevenueTracker = analysisSnapshot?.revenueTracker || {};
+  const currentEstimatedRevenue = roundMoney(
+    analysisRevenueTracker?.earnedNow ??
+      analysisRevenueTracker?.projectedTotal ??
+      appointment.revenueTracker?.earnedNow ??
+      appointment.revenueTracker?.projectedTotal ??
+      0
   );
+  const potentialEstimatedRevenue = roundMoney(
+    analysisRevenueTracker?.projectedRevenueWithSuggestions ??
+      analysisRevenueTracker?.projectedTotal ??
+      appointment.revenueTracker?.projectedRevenueWithSuggestions ??
+      appointment.revenueTracker?.projectedTotal ??
+      currentEstimatedRevenue
+  );
+  const expectedRevenueFromAppointment = potentialEstimatedRevenue;
+  const patientProfile = normalizePatientProfile({
+    patientProfile: appointment.patientProfile || {},
+    patientRef: appointment.patientRef,
+    insurancePlan: appointment.insurancePlan,
+  });
 
   return {
     appointmentId: appointment.id,
     patientRef: appointment.patientRef,
+    patientProfile,
     patientChartId: appointment.patientChartId || "",
     doctorRef: appointment.doctorRef,
     doctorSpecialties: Array.isArray(appointment.doctorSpecialties) ? appointment.doctorSpecialties : [],
@@ -835,6 +933,10 @@ export const getFinalizedNotePacket = (appointmentId) => {
     noteStatus: workflow.status,
     finalizedAt: workflow.finalizedAt,
     expectedRevenueFromAppointment,
+    mergedRevenue: {
+      currentEstimatedRevenue,
+      potentialEstimatedRevenue,
+    },
     billingAccessExpiresAt,
     billingAccessExpired,
     billingRetentionDays: Number(workflow.delivery?.billingRetentionDays || BILLING_ACCESS_RETENTION_DAYS),
@@ -851,6 +953,15 @@ export const getFinalizedNotePacket = (appointmentId) => {
           at: segment.at,
           source: segment.source,
           cleanedText: segment.cleanedText || segment.text || "",
+        }))
+      : [],
+    recordings: Array.isArray(appointment.recordings)
+      ? appointment.recordings.map((item) => ({
+          provider: String(item?.provider || "").trim(),
+          mimeType: String(item?.mimeType || "").trim(),
+          location: String(item?.location || item?.blobUrl || item?.blobName || "").trim(),
+          retentionExpiresAt: item?.retentionExpiresAt || null,
+          uploadedAt: item?.uploadedAt || item?.at || null,
         }))
       : [],
     revenueTracker: appointment.revenueTracker || null,

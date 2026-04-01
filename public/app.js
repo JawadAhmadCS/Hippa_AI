@@ -7,6 +7,7 @@ const state = {
     preferredFactor: "totp",
   },
   appointment: null,
+  selectedPatientProfile: null,
   mediaRecorder: null,
   recordingChunks: [],
   micStream: null,
@@ -37,6 +38,7 @@ const state = {
     note: null,
     codingAnalysis: null,
     autosaveTimer: null,
+    finalEditorTouched: false,
   },
   billing: {
     queue: [],
@@ -85,10 +87,15 @@ const ui = {
   authUserPill: document.getElementById("authUserPill"),
   authUserText: document.getElementById("authUserText"),
   logoutBtn: document.getElementById("logoutBtn"),
-  doctorRef: document.getElementById("doctorRef"),
+  sidebarDoctorName: document.getElementById("sidebarDoctorName"),
+  sidebarDoctorRole: document.getElementById("sidebarDoctorRole"),
   patientRef: document.getElementById("patientRef"),
   patientLookupBtn: document.getElementById("patientLookupBtn"),
   patientChartOptions: document.getElementById("patientChartOptions"),
+  patientHeaderFirstName: document.getElementById("patientHeaderFirstName"),
+  patientHeaderLastName: document.getElementById("patientHeaderLastName"),
+  patientHeaderDob: document.getElementById("patientHeaderDob"),
+  patientHeaderInsurance: document.getElementById("patientHeaderInsurance"),
   consentFormId: document.getElementById("consentFormId"),
   insurancePlan: document.getElementById("insurancePlan"),
   visitType: document.getElementById("visitType"),
@@ -102,14 +109,8 @@ const ui = {
   transcriptFeed: document.getElementById("transcriptFeed"),
   chatFeed: document.getElementById("chatFeed"),
   suggestionList: document.getElementById("suggestionList"),
-  baselineRevenue: document.getElementById("baselineRevenue"),
-  opportunityRevenue: document.getElementById("opportunityRevenue"),
-  earnedNowRevenue: document.getElementById("earnedNowRevenue"),
-  projectedRevenue: document.getElementById("projectedRevenue"),
-  oppChange: document.getElementById("oppChange"),
-  earnedChange: document.getElementById("earnedChange"),
-  payerMultiplier: document.getElementById("payerMultiplier"),
-  multiplierDesc: document.getElementById("multiplierDesc"),
+  currentEstimatedRevenue: document.getElementById("currentEstimatedRevenue"),
+  potentialEstimatedRevenue: document.getElementById("potentialEstimatedRevenue"),
   guidanceList: document.getElementById("guidanceList"),
   billableCodesList: document.getElementById("billableCodesList"),
   billableCount: document.getElementById("billableCount"),
@@ -122,8 +123,10 @@ const ui = {
   noteExamEditor: document.getElementById("noteExamEditor"),
   noteAssessmentEditor: document.getElementById("noteAssessmentEditor"),
   notePlanEditor: document.getElementById("notePlanEditor"),
-  noteManualNotes: document.getElementById("noteManualNotes"),
+  manualDoctorNotesInput: document.getElementById("manualDoctorNotesInput"),
+  noteFinalMergedEditor: document.getElementById("noteFinalMergedEditor"),
   noteMergeStatus: document.getElementById("noteMergeStatus"),
+  noteFinalStatus: document.getElementById("noteFinalStatus"),
   recalculateNoteBtn: document.getElementById("recalculateNoteBtn"),
   saveNoteDraftBtn: document.getElementById("saveNoteDraftBtn"),
   finalizeNoteBtn: document.getElementById("finalizeNoteBtn"),
@@ -154,8 +157,10 @@ const ui = {
   refreshBillingQueueBtn: document.getElementById("refreshBillingQueueBtn"),
   billingQueueBody: document.getElementById("billingQueueBody"),
   billingExpectedRevenue: document.getElementById("billingExpectedRevenue"),
+  billingPatientChartPreview: document.getElementById("billingPatientChartPreview"),
   billingFinalNotePreview: document.getElementById("billingFinalNotePreview"),
   billingTranscriptPreview: document.getElementById("billingTranscriptPreview"),
+  billingAudioPreview: document.getElementById("billingAudioPreview"),
   billingRecommendedCpt: document.getElementById("billingRecommendedCpt"),
   billingRecommendedIcd: document.getElementById("billingRecommendedIcd"),
   billingApprovedCodes: document.getElementById("billingApprovedCodes"),
@@ -312,6 +317,39 @@ const toTitle = (value) =>
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(" ");
 
+const splitPatientName = (value = "") => {
+  const parts = String(value || "")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  if (!parts.length) {
+    return {
+      firstName: "",
+      lastName: "",
+    };
+  }
+  if (parts.length === 1) {
+    return {
+      firstName: parts[0],
+      lastName: "",
+    };
+  }
+  return {
+    firstName: parts[0],
+    lastName: parts.slice(1).join(" "),
+  };
+};
+
+const toInsuranceLabel = (value = "") => {
+  const normalized = String(value || "").trim();
+  if (!normalized) return "-";
+  return normalized
+    .split(/[-_\s]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+};
+
 const getClientLandingContext = () => {
   const pathParts = String(window.location.pathname || "/")
     .split("/")
@@ -355,6 +393,71 @@ const formatDateTime = (value) => {
   return parsed.toLocaleString();
 };
 
+const formatDateOnly = (value) => {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return "-";
+  return parsed.toLocaleDateString();
+};
+
+const setTextContent = (element, value) => {
+  if (!element) return;
+  const normalized = String(value || "").trim();
+  element.textContent = normalized || "-";
+};
+
+const normalizePatientProfile = (profile = {}, fallbackRef = "") => {
+  const fullName = String(
+    profile?.fullName || [profile?.firstName, profile?.lastName].filter(Boolean).join(" ")
+  )
+    .trim();
+  const split = splitPatientName(fullName);
+  const firstName = String(profile?.firstName || split.firstName || "").trim();
+  const lastName = String(profile?.lastName || split.lastName || "").trim();
+  return {
+    patientRef: String(profile?.patientRef || fallbackRef || "")
+      .trim()
+      .toUpperCase(),
+    fullName: fullName || [firstName, lastName].filter(Boolean).join(" ").trim(),
+    firstName,
+    lastName,
+    dob: String(profile?.dob || "").trim(),
+    insuranceInfo: String(profile?.insuranceInfo || "").trim(),
+    externalChartId: String(profile?.externalChartId || "").trim(),
+  };
+};
+
+const renderPatientHeader = ({ patientProfile = null, insurancePlan = "" } = {}) => {
+  const normalized = normalizePatientProfile(patientProfile || {}, ui.patientRef?.value || "");
+  const insuranceLabel = normalized.insuranceInfo
+    ? toInsuranceLabel(normalized.insuranceInfo)
+    : toInsuranceLabel(insurancePlan);
+  setTextContent(ui.patientHeaderFirstName, normalized.firstName || "-");
+  setTextContent(ui.patientHeaderLastName, normalized.lastName || "-");
+  setTextContent(ui.patientHeaderDob, normalized.dob ? formatDateOnly(normalized.dob) : "-");
+  setTextContent(ui.patientHeaderInsurance, insuranceLabel || "-");
+};
+
+const renderSidebarDoctorIdentity = () => {
+  const user = state.auth.user;
+  if (!user) {
+    setTextContent(ui.sidebarDoctorName, "Not signed in");
+    setTextContent(ui.sidebarDoctorRole, "User");
+    return;
+  }
+  const display = String(user.displayName || user.username || "").trim() || "Doctor";
+  const role = String(user.role || "").trim();
+  const roleLabel =
+    role === "provider"
+      ? "Attending Physician"
+      : role === "billing"
+        ? "Billing Team"
+        : role === "admin"
+          ? "Administrator"
+          : toTitle(role || "User");
+  setTextContent(ui.sidebarDoctorName, display);
+  setTextContent(ui.sidebarDoctorRole, roleLabel);
+};
+
 const readPreferences = () => {
   try {
     const raw = localStorage.getItem(PREFS_KEY);
@@ -389,6 +492,10 @@ const clearAuthState = () => {
   state.auth.challengeId = "";
   state.auth.availableFactors = ["totp"];
   state.auth.preferredFactor = "totp";
+  state.appointment = null;
+  state.selectedPatientProfile = null;
+  state.noteEditor.finalEditorTouched = false;
+  renderPatientHeader({ patientProfile: null, insurancePlan: ui.insurancePlan?.value || "" });
   writeAuthToken("");
 };
 
@@ -409,14 +516,12 @@ const setAuthUserUi = () => {
   if (ui.logoutBtn) {
     ui.logoutBtn.disabled = !user;
   }
+  renderSidebarDoctorIdentity();
 };
 
 const applyUserContextToEncounterForm = () => {
   const user = state.auth.user;
   if (!user) return;
-  if (ui.doctorRef) {
-    ui.doctorRef.value = String(user.username || user.id || "").trim();
-  }
   if (ui.prefDoctorRef && !ui.prefDoctorRef.value.trim()) {
     ui.prefDoctorRef.value = String(user.username || "default").trim() || "default";
   }
@@ -805,68 +910,31 @@ const renderSuggestions = (suggestions) => {
 };
 
 const renderRevenueTracker = (tracker) => {
-  const baseline = Number(tracker?.currentCodesRevenue ?? tracker?.baseline ?? 0);
-  const opportunity = Number(
-    tracker?.suggestedCodesRevenue ?? tracker?.compliantOpportunity ?? 0
+  const currentEstimatedRevenue = Number(
+    tracker?.earnedNow ??
+      tracker?.currentCodesRevenue ??
+      tracker?.baseline ??
+      tracker?.projectedTotal ??
+      0
   );
-  const earnedNow = Number(tracker?.earnedNow ?? tracker?.projectedTotal ?? 0);
-  const projected = Number(
-    tracker?.projectedRevenueWithSuggestions ?? tracker?.projectedTotal ?? earnedNow
+  const potentialEstimatedRevenue = Number(
+    tracker?.projectedRevenueWithSuggestions ??
+      tracker?.projectedTotal ??
+      currentEstimatedRevenue
   );
-  const payerMultiplier = Number(tracker?.payerMultiplier || 1);
 
-  ui.baselineRevenue.textContent = `$${safeNumber(baseline)}`;
-  ui.opportunityRevenue.textContent = `$${safeNumber(opportunity)}`;
-  ui.earnedNowRevenue.textContent = `$${safeNumber(earnedNow)}`;
-  ui.projectedRevenue.textContent = `$${safeNumber(projected)}`;
-  ui.payerMultiplier.textContent = `x${safeNumber(payerMultiplier)}`;
-
-  if (ui.oppChange) {
-    ui.oppChange.textContent =
-      opportunity > 0
-        ? `+${safeNumber(opportunity)} possible from suggested codes`
-        : "No added suggested-code opportunity yet";
+  if (ui.currentEstimatedRevenue) {
+    ui.currentEstimatedRevenue.textContent = `$${safeNumber(currentEstimatedRevenue)}`;
   }
-
-  if (ui.earnedChange) {
-    const codeCount = Array.isArray(tracker?.billableCodes) ? tracker.billableCodes.length : 0;
-    ui.earnedChange.textContent = `${codeCount} suggested code${codeCount === 1 ? "" : "s"} with evidence`;
+  if (ui.potentialEstimatedRevenue) {
+    ui.potentialEstimatedRevenue.textContent = `$${safeNumber(potentialEstimatedRevenue)}`;
   }
 };
 
 const renderGuidance = (guidanceItems) => {
-  ui.guidanceList.innerHTML = "";
-  if (!Array.isArray(guidanceItems) || guidanceItems.length === 0) {
-    ui.guidanceList.innerHTML = emptyStateHtml("No compliance prompts yet.");
-    return;
-  }
-
-  for (const item of guidanceItems.slice(0, 6)) {
-    const row = document.createElement("div");
-    row.className = "guidance-item";
-    const evidenceKey = getEvidenceKey("guidance", item);
-    const mainText = item.text || item.prompt || "";
-    const detailText = item.detail || item.rationale || "";
-    row.innerHTML = `
-      <div class="guidance-tag">${escapeHtml(
-        item.sourceType === "missed-billable"
-          ? "BILLING SUPPORT"
-          : item.sourceType === "documentation-gap"
-            ? "COMPLIANCE"
-            : parsePriority(item.priority)
-      )}</div>
-      <div class="guidance-text">${escapeHtml(mainText)}</div>
-      ${detailText ? `<div class="guidance-detail">${escapeHtml(detailText)}</div>` : ""}
-    `;
-
-    bindEvidenceTrigger(row, {
-      title: mainText || "Compliance guidance",
-      subtitle: detailText || "Supporting transcript evidence",
-      refs: item.evidenceRefs || [],
-      evidenceKey,
-    });
-
-    ui.guidanceList.appendChild(row);
+  const count = Array.isArray(guidanceItems) ? guidanceItems.length : 0;
+  if (ui.guidanceBadge) {
+    ui.guidanceBadge.textContent = count ? `${count} AI hints` : "Editable";
   }
 };
 
@@ -910,20 +978,12 @@ const renderBillableCodes = (codes) => {
   }
 };
 
-const getEditableText = (element) => String(element?.textContent || "").trim();
-
-const setEditableText = (element, value) => {
-  if (!element) return;
-  element.textContent = String(value || "").trim();
-};
-
 const buildProviderNoteText = (content = {}) => {
   const manual = String(content?.additionalProviderNotes || "").trim();
   const merged = String(content?.freeTextAdditions || "").trim();
   if (merged) return merged;
-  if (manual) return manual;
   const sections = content?.sections || {};
-  return [
+  const sectionText = [
     sections.hpi,
     sections.ros,
     sections.exam,
@@ -933,6 +993,10 @@ const buildProviderNoteText = (content = {}) => {
     .map((item) => String(item || "").trim())
     .filter(Boolean)
     .join("\n");
+  if (manual && sectionText) {
+    return `${sectionText}\n\nManual Notes:\n${manual}`;
+  }
+  return sectionText || manual;
 };
 
 const syncProviderNoteIntoChartNotes = (noteText) => {
@@ -961,7 +1025,8 @@ const syncProviderNoteIntoChartNotes = (noteText) => {
 };
 
 const getNoteContentFromUi = () => {
-  const noteText = String(ui.noteManualNotes?.value || "").trim();
+  const manualNotes = String(ui.manualDoctorNotesInput?.value || "").trim();
+  const mergedNotes = String(ui.noteFinalMergedEditor?.value || "").trim();
   const existingSections = state.noteEditor.note?.version?.contentJson?.sections || {};
   return {
     sections: {
@@ -971,34 +1036,50 @@ const getNoteContentFromUi = () => {
       assessment: String(existingSections.assessment || "").trim(),
       plan: String(existingSections.plan || "").trim(),
     },
-    additionalProviderNotes: noteText,
-    freeTextAdditions: noteText,
+    additionalProviderNotes: manualNotes,
+    freeTextAdditions: mergedNotes || manualNotes,
   };
 };
 
 const setNoteContentToUi = (content = {}) => {
-  const providerText = buildProviderNoteText(content);
-  if (ui.noteManualNotes) {
-    ui.noteManualNotes.value = providerText;
+  const manualText = String(content?.additionalProviderNotes || "").trim();
+  const mergedText = buildProviderNoteText(content);
+  state.noteEditor.finalEditorTouched = false;
+  if (ui.manualDoctorNotesInput) {
+    ui.manualDoctorNotesInput.value = manualText;
   }
-  syncProviderNoteIntoChartNotes(providerText);
+  if (ui.noteFinalMergedEditor) {
+    ui.noteFinalMergedEditor.value = mergedText;
+  }
+  syncProviderNoteIntoChartNotes(mergedText);
   updateNoteMergeStatus();
 };
 
 const updateNoteMergeStatus = () => {
   if (!ui.noteMergeStatus) return;
-  const noteText = String(ui.noteManualNotes?.value || "").trim();
-  if (!noteText) {
+  const manualNotes = String(ui.manualDoctorNotesInput?.value || "").trim();
+  const mergedNotes = String(ui.noteFinalMergedEditor?.value || "").trim();
+  if (!manualNotes && !mergedNotes) {
     ui.noteMergeStatus.textContent =
-      "Type and save once. AI uses these notes for chart summary, next-step recommendations, and code suggestions.";
+      "Add manual notes here. The merged final chart note stays editable below before finalization.";
+    if (ui.noteFinalStatus) {
+      ui.noteFinalStatus.textContent =
+        "After the appointment ends, edit this final section and click Finalize to publish to Billing + EHR.";
+    }
     return;
   }
-  const lines = noteText.split(/\r?\n/).filter((line) => line.trim()).length;
-  ui.noteMergeStatus.textContent = `Doctor note captured (${lines} lines). AI will merge it into chart notes and coding guidance.`;
+  const manualLines = manualNotes.split(/\r?\n/).filter((line) => line.trim()).length;
+  const mergedLines = mergedNotes.split(/\r?\n/).filter((line) => line.trim()).length;
+  ui.noteMergeStatus.textContent = `Manual note captured (${manualLines} lines). Merged final note currently has ${mergedLines} lines and remains editable.`;
+  if (ui.noteFinalStatus) {
+    ui.noteFinalStatus.textContent =
+      "Merged final note is ready for review. Save any edits, then click Finalize to send Billing + EHR.";
+  }
 };
 
 const setNoteLockState = (locked) => {
-  if (ui.noteManualNotes) ui.noteManualNotes.disabled = Boolean(locked);
+  if (ui.manualDoctorNotesInput) ui.manualDoctorNotesInput.disabled = Boolean(locked);
+  if (ui.noteFinalMergedEditor) ui.noteFinalMergedEditor.disabled = Boolean(locked);
   if (ui.saveNoteDraftBtn) ui.saveNoteDraftBtn.disabled = Boolean(locked);
   if (ui.recalculateNoteBtn) ui.recalculateNoteBtn.disabled = Boolean(locked);
   if (ui.finalizeNoteBtn) ui.finalizeNoteBtn.disabled = Boolean(locked);
@@ -1082,8 +1163,11 @@ const renderNotePayload = (payload) => {
     note?.version?.finalCodes ||
     payload?.codingAnalysis?.cptCodes?.map((item) => item.code).filter(Boolean) ||
     [];
-  if (ui.noteFinalCodesInput && !ui.noteFinalCodesInput.value.trim()) {
+  if (ui.noteFinalCodesInput) {
     ui.noteFinalCodesInput.value = finalCodes.join(", ");
+  }
+  if (ui.overrideReasonInput) {
+    ui.overrideReasonInput.value = String(note?.version?.overrideReason || "");
   }
 };
 
@@ -1440,9 +1524,18 @@ const renderBillingQueue = (queue = []) => {
 
   const rowsHtml = state.billing.queue
     .map(
-      (item) => `
+      (item) => {
+        const patientProfile = normalizePatientProfile(item?.patientProfile || {}, item?.patientRef || "");
+        const patientLabel =
+          [patientProfile.firstName, patientProfile.lastName].filter(Boolean).join(" ") ||
+          patientProfile.patientRef ||
+          "-";
+        return `
       <tr>
-        <td><div class="table-code-pill">${escapeHtml(item.appointmentId || "-")}</div></td>
+        <td>
+          <div class="table-code-pill">${escapeHtml(item.appointmentId || "-")}</div>
+          <div class="tiny-note">${escapeHtml(patientLabel)}</div>
+        </td>
         <td>${escapeHtml(formatDateTime(item.finalizedAt))}</td>
         <td>${escapeHtml(formatCurrency(item.expectedRevenueFromAppointment || 0))}</td>
         <td>${escapeHtml((item.approvedCodes || []).join(", ") || "-")}</td>
@@ -1450,7 +1543,8 @@ const renderBillingQueue = (queue = []) => {
         <td><button class="btn btn-ghost" type="button" data-billing-open="${escapeHtml(
           item.appointmentId
         )}" style="height:30px;padding:0 10px;">Open</button></td>
-      </tr>`
+      </tr>`;
+      }
     )
     .join("");
 
@@ -1480,21 +1574,40 @@ const loadBillingQueue = async () => {
 
 const loadBillingFinalNote = async (appointmentId) => {
   const payload = await api(`/api/billing/appointments/${encodeURIComponent(appointmentId)}/final`);
-  const sections = payload?.finalVersion?.contentJson?.sections || {};
-  const manualNotes = String(payload?.finalVersion?.contentJson?.additionalProviderNotes || "").trim();
-  const providerAdditions = String(payload?.finalVersion?.contentJson?.freeTextAdditions || "").trim();
-  const preview = [
-    `HPI: ${sections.hpi || "-"}`,
-    `ROS: ${sections.ros || "-"}`,
-    `Exam: ${sections.exam || "-"}`,
-    `Assessment: ${sections.assessment || "-"}`,
-    `Plan: ${sections.plan || "-"}`,
-    manualNotes ? `Manual Notes: ${manualNotes}` : "",
-    providerAdditions ? `Provider Additions: ${providerAdditions}` : "",
-  ].join("\n\n");
+  const noteContent = payload?.finalVersion?.contentJson || {};
+  const preview = buildProviderNoteText(noteContent) || "No finalized merged note available.";
+  const patientProfile = normalizePatientProfile(payload?.patientProfile || {}, payload?.patientRef || "");
+  const patientSummary = [
+    patientProfile.patientRef ? `Ref: ${patientProfile.patientRef}` : "",
+    patientProfile.externalChartId ? `Chart: ${patientProfile.externalChartId}` : "",
+    patientProfile.fullName ? `Name: ${patientProfile.fullName}` : "",
+    patientProfile.dob ? `DOB: ${formatDateOnly(patientProfile.dob)}` : "",
+    patientProfile.insuranceInfo ? `Insurance: ${toInsuranceLabel(patientProfile.insuranceInfo)}` : "",
+  ]
+    .filter(Boolean)
+    .join(" | ");
+
+  const currentRevenue = Number(
+    payload?.mergedRevenue?.currentEstimatedRevenue ??
+      payload?.revenueTracker?.earnedNow ??
+      payload?.revenueTracker?.projectedTotal ??
+      0
+  );
+  const potentialRevenue = Number(
+    payload?.mergedRevenue?.potentialEstimatedRevenue ??
+      payload?.expectedRevenueFromAppointment ??
+      payload?.revenueTracker?.projectedRevenueWithSuggestions ??
+      payload?.revenueTracker?.projectedTotal ??
+      currentRevenue
+  );
 
   if (ui.billingExpectedRevenue) {
-    ui.billingExpectedRevenue.textContent = formatCurrency(payload?.expectedRevenueFromAppointment || 0);
+    ui.billingExpectedRevenue.textContent = `Current: ${formatCurrency(
+      currentRevenue
+    )} | Potential: ${formatCurrency(potentialRevenue)}`;
+  }
+  if (ui.billingPatientChartPreview) {
+    ui.billingPatientChartPreview.textContent = patientSummary || "Patient chart summary unavailable.";
   }
   if (ui.billingFinalNotePreview) {
     ui.billingFinalNotePreview.textContent = preview;
@@ -1529,6 +1642,23 @@ const loadBillingFinalNote = async (appointmentId) => {
     : "";
   if (ui.billingTranscriptPreview) {
     ui.billingTranscriptPreview.textContent = transcriptPreview || "No transcript excerpts loaded.";
+  }
+  const recordings = Array.isArray(payload?.recordings) ? payload.recordings : [];
+  const audioPreview = recordings.length
+    ? recordings
+        .slice(0, 4)
+        .map((item, index) => {
+          const provider = String(item?.provider || "storage").trim() || "storage";
+          const savedAt = item?.uploadedAt ? formatDateTime(item.uploadedAt) : "-";
+          const location = String(item?.location || "").trim();
+          return `${index + 1}) ${provider} ${savedAt !== "-" ? `@ ${savedAt}` : ""}${
+            location ? ` (${location})` : ""
+          }`;
+        })
+        .join(" | ")
+    : "No audio recordings loaded.";
+  if (ui.billingAudioPreview) {
+    ui.billingAudioPreview.textContent = audioPreview;
   }
   renderCodePillsWithEvidence({
     container: ui.billingCodeEvidence,
@@ -1626,6 +1756,62 @@ const renderPatientChartOptions = (patients = []) => {
     : "";
 };
 
+const setSelectedPatientProfile = (profile = null, { insurancePlan = "" } = {}) => {
+  state.selectedPatientProfile = profile
+    ? normalizePatientProfile(profile, ui.patientRef?.value || "")
+    : null;
+  renderPatientHeader({
+    patientProfile: state.selectedPatientProfile,
+    insurancePlan:
+      insurancePlan ||
+      state.appointment?.insurancePlan ||
+      ui.insurancePlan?.value ||
+      state.selectedPatientProfile?.insuranceInfo ||
+      "",
+  });
+};
+
+const loadPatientProfileByRef = async (patientRef, { silent = false } = {}) => {
+  const normalizedRef = String(patientRef || "")
+    .trim()
+    .toUpperCase();
+  if (!normalizedRef) {
+    setSelectedPatientProfile(null, { insurancePlan: ui.insurancePlan?.value || "" });
+    return null;
+  }
+  if (!["provider", "admin"].includes(state.auth.user?.role || "")) return null;
+
+  try {
+    const payload = await api(`/api/patient-charts/${encodeURIComponent(normalizedRef)}`);
+    const patient = payload?.patient || null;
+    setSelectedPatientProfile(
+      patient
+        ? {
+            ...patient,
+            insuranceInfo: toInsuranceLabel(ui.insurancePlan?.value || ""),
+          }
+        : null,
+      { insurancePlan: ui.insurancePlan?.value || "" }
+    );
+    if (!silent && patient) {
+      addLog(`Loaded patient chart ${patient.patientRef || normalizedRef}.`, "info");
+    }
+    return patient;
+  } catch (error) {
+    setSelectedPatientProfile(
+      {
+        patientRef: normalizedRef,
+        insuranceInfo: toInsuranceLabel(ui.insurancePlan?.value || ""),
+      },
+      { insurancePlan: ui.insurancePlan?.value || "" }
+    );
+    if (!silent) {
+      addLog(`Unable to load patient chart ${normalizedRef}: ${error.message}`, "warn");
+    }
+    return null;
+  }
+};
+
 const lookupPatientCharts = async ({ query = "", silent = false } = {}) => {
   if (!["provider", "admin"].includes(state.auth.user?.role || "")) return [];
   const params = new URLSearchParams();
@@ -1635,6 +1821,19 @@ const lookupPatientCharts = async ({ query = "", silent = false } = {}) => {
   const payload = await api(`/api/patient-charts/search?${params.toString()}`);
   const patients = Array.isArray(payload?.patients) ? payload.patients : [];
   renderPatientChartOptions(patients);
+  const normalizedQuery = q.toUpperCase();
+  const exactMatch = patients.find(
+    (patient) => String(patient?.patientRef || "").trim().toUpperCase() === normalizedQuery
+  );
+  if (exactMatch) {
+    setSelectedPatientProfile(
+      {
+        ...exactMatch,
+        insuranceInfo: toInsuranceLabel(ui.insurancePlan?.value || ""),
+      },
+      { insurancePlan: ui.insurancePlan?.value || "" }
+    );
+  }
   if (!silent) {
     addLog(`Loaded ${patients.length} patient chart match${patients.length === 1 ? "" : "es"}.`, "info");
   }
@@ -2567,8 +2766,8 @@ const summarizeAssistantUpdate = ({
 
   const guidanceText = formatGuidanceText(guidanceItems);
   const guidancePart = guidanceText
-    ? `Compliance prompts: ${guidanceText}`
-    : "Compliance prompts: continue collecting encounter details (duration, severity, and plan).";
+    ? `AI prompts: ${guidanceText}`
+    : "AI prompts: continue collecting encounter details (duration, severity, and plan).";
 
   const missedPart = missedBillables.length
     ? `Missed billables: ${missedBillables
@@ -2885,7 +3084,7 @@ const resetEncounterPanels = () => {
       : "AI chart notes appear here during encounter"
   );
   ui.chatFeed.innerHTML = emptyStateHtml("Assistant analysis will appear here");
-  ui.guidanceList.innerHTML = emptyStateHtml("Compliance prompts will appear here");
+  if (ui.guidanceBadge) ui.guidanceBadge.textContent = "Editable";
   ui.suggestionList.innerHTML = emptyStateHtml("Assistant code suggestions surface as encounter progresses");
   ui.billableCodesList.innerHTML = emptyStateHtml("No suggested codes logged yet");
 
@@ -2910,8 +3109,7 @@ const startEncounter = async () => {
     return;
   }
 
-  const doctorRef = String(state.auth.user?.username || ui.doctorRef.value || "").trim();
-  if (ui.doctorRef) ui.doctorRef.value = doctorRef;
+  const doctorRef = String(state.auth.user?.username || "").trim();
   const patientRef = ui.patientRef.value.trim() || "anonymous";
   const consentFormId = ui.consentFormId.value.trim();
   const encounterMode = String(ui.encounterMode?.value || "in-person").trim().toLowerCase();
@@ -2946,6 +3144,14 @@ const startEncounter = async () => {
   });
 
   state.appointment = created.appointment;
+  state.selectedPatientProfile = normalizePatientProfile(
+    created?.appointment?.patientProfile || {},
+    created?.appointment?.patientRef || patientRef
+  );
+  renderPatientHeader({
+    patientProfile: state.selectedPatientProfile,
+    insurancePlan: created?.appointment?.insurancePlan || ui.insurancePlan?.value || "",
+  });
   state.encounterActive = true;
   state.lastTranscriptNormalized = "";
   state.lastTranscriptAt = 0;
@@ -2955,6 +3161,7 @@ const startEncounter = async () => {
   state.noteEditor.loaded = false;
   state.noteEditor.note = null;
   state.noteEditor.codingAnalysis = null;
+  state.noteEditor.finalEditorTouched = false;
   clearInterimTranscript();
 
   resetEncounterPanels();
@@ -3036,6 +3243,12 @@ const stopEncounter = async () => {
   });
   ui.startBtn.disabled = false;
   addLog("Encounter ended.");
+
+  if (state.appointment?.id) {
+    loadAppointmentNote(state.appointment.id, { includeVersions: true }).catch((error) =>
+      addLog(`Unable to refresh merged final notes: ${error.message}`, "warn")
+    );
+  }
 
   const prefs = readPreferences();
   if (prefs.autoOpenPastAfterStop) {
@@ -3403,13 +3616,31 @@ const bindNoteEditor = () => {
   });
 
   const autosaveInputs = [
-    ui.noteManualNotes,
+    ui.manualDoctorNotesInput,
+    ui.noteFinalMergedEditor,
   ];
 
   for (const input of autosaveInputs) {
     if (!input) continue;
     input.addEventListener("input", () => {
-      syncProviderNoteIntoChartNotes(ui.noteManualNotes?.value || "");
+      if (input === ui.noteFinalMergedEditor) {
+        state.noteEditor.finalEditorTouched = true;
+      }
+      if (
+        input === ui.manualDoctorNotesInput &&
+        ui.noteFinalMergedEditor &&
+        !state.noteEditor.finalEditorTouched
+      ) {
+        ui.noteFinalMergedEditor.value = buildProviderNoteText({
+          sections: state.noteEditor.note?.version?.contentJson?.sections || {},
+          additionalProviderNotes: String(ui.manualDoctorNotesInput?.value || "").trim(),
+          freeTextAdditions: "",
+        });
+      }
+      const mergedPreview = String(
+        ui.noteFinalMergedEditor?.value || ui.manualDoctorNotesInput?.value || ""
+      ).trim();
+      syncProviderNoteIntoChartNotes(mergedPreview);
       updateNoteMergeStatus();
       scheduleNoteAutosave();
     });
@@ -3481,14 +3712,36 @@ document.addEventListener("keydown", (event) => {
 ui.consentGiven?.addEventListener("change", setConsentBadgeState);
 ui.encounterMode?.addEventListener("change", syncEncounterModeUi);
 ui.patientLookupBtn?.addEventListener("click", () => {
-  lookupPatientCharts({ query: ui.patientRef?.value || "" }).catch((error) =>
-    addLog(`Patient chart lookup failed: ${error.message}`, "warn")
-  );
+  lookupPatientCharts({ query: ui.patientRef?.value || "" })
+    .then(() => loadPatientProfileByRef(ui.patientRef?.value || ""))
+    .catch((error) => addLog(`Patient chart lookup failed: ${error.message}`, "warn"));
 });
 ui.patientRef?.addEventListener("input", () => {
   const query = String(ui.patientRef.value || "").trim();
+  if (!query) {
+    setSelectedPatientProfile(null, { insurancePlan: ui.insurancePlan?.value || "" });
+    return;
+  }
   if (query.length < 2) return;
   lookupPatientCharts({ query, silent: true }).catch(() => {});
+});
+ui.patientRef?.addEventListener("change", () => {
+  loadPatientProfileByRef(ui.patientRef?.value || "", { silent: true }).catch(() => {});
+});
+ui.patientRef?.addEventListener("blur", () => {
+  loadPatientProfileByRef(ui.patientRef?.value || "", { silent: true }).catch(() => {});
+});
+ui.insurancePlan?.addEventListener("change", () => {
+  if (state.selectedPatientProfile) {
+    state.selectedPatientProfile = {
+      ...state.selectedPatientProfile,
+      insuranceInfo: toInsuranceLabel(ui.insurancePlan?.value || ""),
+    };
+  }
+  renderPatientHeader({
+    patientProfile: state.selectedPatientProfile,
+    insurancePlan: ui.insurancePlan?.value || "",
+  });
 });
 ui.authPasswordBtn?.addEventListener("click", () => {
   handlePasswordAuth().catch((error) => setAuthError(error.message || "Login failed."));
@@ -3536,6 +3789,7 @@ bindPreferences();
 bindCodebook();
 bindNoteEditor();
 updateNoteMergeStatus();
+renderPatientHeader({ patientProfile: null, insurancePlan: ui.insurancePlan?.value || "" });
 setAuthUserUi();
 applyRoleViewAccess();
 setAuthOverlayOpen(true);
