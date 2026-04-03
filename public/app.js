@@ -314,7 +314,7 @@ const PREFS_KEY = "mari.preferences.v1";
 const AUTH_TOKEN_KEY = "mari.auth.token.v1";
 const viewTitles = {
   live: "Live Encounter",
-  past: "Past Encounters",
+  past: "Appointment History",
   billing: "Billing Queue",
   revenue: "Revenue Reports",
   settings: "Settings",
@@ -556,9 +556,14 @@ const normalizePatientProfile = (profile = {}, fallbackRef = "") => {
 
 const renderPatientHeader = ({ patientProfile = null, insurancePlan = "" } = {}) => {
   const normalized = normalizePatientProfile(patientProfile || {}, ui.patientRef?.value || "");
+  const derivedInsurancePlan =
+    normalizeInsurancePlanKey(normalized.insuranceInfo || insurancePlan || "medicare") || "medicare";
+  if (ui.insurancePlan) {
+    ui.insurancePlan.value = derivedInsurancePlan;
+  }
   const insuranceLabel = normalized.insuranceInfo
     ? toInsuranceLabel(normalized.insuranceInfo)
-    : toInsuranceLabel(insurancePlan);
+    : toInsuranceLabel(derivedInsurancePlan);
   const patientId = String(normalized.patientRef || normalized.externalChartId || "").trim().toUpperCase();
   if (ui.patientHeaderFirstNameInput) {
     ui.patientHeaderFirstNameInput.value = normalized.firstName || "";
@@ -2142,7 +2147,15 @@ const renderNoteQueue = (appointments = []) => {
       if (!appointmentId) return;
       loadAppointmentNote(appointmentId, { includeVersions: true })
         .then(() => {
-          ui.providerNoteEditorCard?.scrollIntoView({ behavior: "smooth", block: "start" });
+          const showEditor = () =>
+            ui.providerNoteEditorCard?.scrollIntoView({ behavior: "smooth", block: "start" });
+          if (state.currentView !== "live") {
+            setActiveView("live")
+              .then(showEditor)
+              .catch(() => showEditor());
+            return;
+          }
+          showEditor();
         })
         .catch((error) => addLog(`Unable to open note ${appointmentId}: ${error.message}`, "warn"));
     });
@@ -2218,15 +2231,9 @@ const loadPatientProfileByRef = async (
   try {
     const payload = await api(`/api/patient-charts/${encodeURIComponent(normalizedRef)}`);
     const patient = payload?.patient || null;
-    setSelectedPatientProfile(
-      patient
-        ? {
-            ...patient,
-            insuranceInfo: toInsuranceLabel(ui.insurancePlan?.value || ""),
-          }
-        : null,
-      { insurancePlan: ui.insurancePlan?.value || "" }
-    );
+    setSelectedPatientProfile(patient ? { ...patient } : null, {
+      insurancePlan: ui.insurancePlan?.value || "",
+    });
     if (!silent && patient) {
       addLog(`Loaded patient chart ${patient.patientRef || normalizedRef}.`, "info");
     }
@@ -2238,7 +2245,6 @@ const loadPatientProfileByRef = async (
       setSelectedPatientProfile(
         {
           ...matched,
-          insuranceInfo: toInsuranceLabel(ui.insurancePlan?.value || ""),
         },
         { insurancePlan: ui.insurancePlan?.value || "" }
       );
@@ -2281,7 +2287,6 @@ const lookupPatientCharts = async ({ query = "", silent = false } = {}) => {
     setSelectedPatientProfile(
       {
         ...exactMatch,
-        insuranceInfo: toInsuranceLabel(ui.insurancePlan?.value || ""),
       },
       { insurancePlan: ui.insurancePlan?.value || "" }
     );
@@ -2397,7 +2402,6 @@ const findPatientFromLookupDraft = async ({ silent = false } = {}) => {
       setSelectedPatientProfile(
         {
           ...matched,
-          insuranceInfo: toInsuranceLabel(ui.insurancePlan?.value || ""),
         },
         { insurancePlan: ui.insurancePlan?.value || "" }
       );
@@ -3469,6 +3473,7 @@ const setActiveView = async (view, { forceReload = false } = {}) => {
 
   if (view === "past" && (forceReload || !state.loadedViewData.past)) {
     await loadPastEncounters();
+    await loadNoteQueue({ silent: true });
   }
   if (view === "billing" && (forceReload || !state.loadedViewData.billing)) {
     await loadBillingQueue();
@@ -4027,7 +4032,7 @@ const stopEncounter = async () => {
   const prefs = readPreferences();
   if (prefs.autoOpenPastAfterStop) {
     setActiveView("past", { forceReload: true }).catch((error) =>
-      addLog(`Unable to open Past Encounters: ${error.message}`, "warn")
+      addLog(`Unable to open Appointment History: ${error.message}`, "warn")
     );
   }
 };
@@ -4049,10 +4054,10 @@ const bindNavigation = () => {
   }
 
   ui.refreshPastBtn?.addEventListener("click", () => {
-    loadPastEncounters().catch((error) => addLog(`Past encounters refresh failed: ${error.message}`, "warn"));
+    loadPastEncounters().catch((error) => addLog(`Appointment history refresh failed: ${error.message}`, "warn"));
   });
   ui.applyPastFiltersBtn?.addEventListener("click", () => {
-    loadPastEncounters().catch((error) => addLog(`Past encounter filter failed: ${error.message}`, "warn"));
+    loadPastEncounters().catch((error) => addLog(`Appointment history filter failed: ${error.message}`, "warn"));
   });
 
   ui.refreshRevenueBtn?.addEventListener("click", () => {
