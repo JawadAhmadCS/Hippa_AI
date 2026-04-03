@@ -2647,6 +2647,19 @@ Follow-up / orders:"></textarea>
   </div><!-- /main -->
 </div>
 
+<div class="auth-overlay" id="consentOverlay">
+  <div class="auth-card">
+    <h3>Verbal Consent Required</h3>
+    <p class="tiny-note">
+      Confirm the patient verbally agreed to AI transcription and audio recording before starting this appointment.
+    </p>
+    <div class="inline-actions" style="justify-content:flex-end;">
+      <button class="btn btn-ghost" id="consentCancelBtn" type="button">Cancel</button>
+      <button class="btn btn-primary" id="consentConfirmBtn" type="button">Consent Given</button>
+    </div>
+  </div>
+</div>
+
 <div class="auth-overlay" id="authOverlay">
   <div class="auth-card">
     <h3>Secure Sign In</h3>

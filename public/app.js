@@ -77,9 +77,13 @@
   },
   clientLandingId: "",
   clientLandingName: "",
+  pendingConsentResolver: null,
 };
 
 const ui = {
+  consentOverlay: document.getElementById("consentOverlay"),
+  consentConfirmBtn: document.getElementById("consentConfirmBtn"),
+  consentCancelBtn: document.getElementById("consentCancelBtn"),
   authOverlay: document.getElementById("authOverlay"),
   authUsername: document.getElementById("authUsername"),
   authPassword: document.getElementById("authPassword"),
@@ -643,6 +647,11 @@ const clearAuthState = () => {
   state.noteEditor.finalEditorTouched = false;
   state.noteEditor.activeAppointmentId = "";
   state.noteQueue.items = [];
+  if (state.pendingConsentResolver) {
+    resolveConsentPrompt(false);
+  } else {
+    setConsentOverlayOpen(false);
+  }
   if (state.noteQueue.pollTimer) {
     clearInterval(state.noteQueue.pollTimer);
     state.noteQueue.pollTimer = null;
@@ -653,6 +662,19 @@ const clearAuthState = () => {
 
 const setAuthOverlayOpen = (open) => {
   ui.authOverlay?.classList.toggle("open", Boolean(open));
+};
+
+const setConsentOverlayOpen = (open) => {
+  ui.consentOverlay?.classList.toggle("open", Boolean(open));
+};
+
+const resolveConsentPrompt = (accepted) => {
+  const resolver = state.pendingConsentResolver;
+  state.pendingConsentResolver = null;
+  setConsentOverlayOpen(false);
+  if (typeof resolver === "function") {
+    resolver(Boolean(accepted));
+  }
 };
 
 const setAuthUserUi = () => {
@@ -3864,10 +3886,23 @@ const buildConsentFormId = () => {
   return `CONSENT-${stamp}-${random}`;
 };
 
-const requestEncounterConsent = () =>
-  window.confirm(
-    "Confirm patient verbal consent for AI transcription and audio recording before starting this appointment."
-  );
+const requestEncounterConsent = async () => {
+  if (!ui.consentOverlay || !ui.consentConfirmBtn || !ui.consentCancelBtn) {
+    return window.confirm(
+      "Confirm patient verbal consent for AI transcription and audio recording before starting this appointment."
+    );
+  }
+
+  if (state.pendingConsentResolver) {
+    resolveConsentPrompt(false);
+  }
+
+  return new Promise((resolve) => {
+    state.pendingConsentResolver = resolve;
+    setConsentOverlayOpen(true);
+    ui.consentConfirmBtn.focus();
+  });
+};
 
 const startEncounter = async () => {
   if (!["provider", "admin"].includes(state.auth.user?.role || "")) {
@@ -3875,7 +3910,10 @@ const startEncounter = async () => {
     return;
   }
 
-  const consentAccepted = requestEncounterConsent();
+  if (ui.consentGiven) ui.consentGiven.checked = false;
+  setConsentBadgeState();
+
+  const consentAccepted = await requestEncounterConsent();
   if (!consentAccepted) {
     addLog("Start canceled: patient consent not confirmed.", "warn");
     return;
@@ -4513,10 +4551,24 @@ ui.evidenceBackdrop?.addEventListener("click", closeEvidenceDrawer);
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") {
     closeEvidenceDrawer();
+    if (state.pendingConsentResolver) {
+      resolveConsentPrompt(false);
+    }
   }
 });
 
 ui.consentGiven?.addEventListener("change", setConsentBadgeState);
+ui.consentConfirmBtn?.addEventListener("click", () => {
+  resolveConsentPrompt(true);
+});
+ui.consentCancelBtn?.addEventListener("click", () => {
+  resolveConsentPrompt(false);
+});
+ui.consentOverlay?.addEventListener("click", (event) => {
+  if (event.target === ui.consentOverlay) {
+    resolveConsentPrompt(false);
+  }
+});
 ui.encounterMode?.addEventListener("change", syncEncounterModeUi);
 ui.patientLookupBtn?.addEventListener("click", () => {
   const draft = readPatientLookupDraft();
