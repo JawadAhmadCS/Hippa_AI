@@ -256,7 +256,12 @@ const ui = {
   saveCodebookBtn: document.getElementById("saveCodebookBtn"),
   codebookFavoriteDoctorRef: document.getElementById("codebookFavoriteDoctorRef"),
   codebookFavoriteCodes: document.getElementById("codebookFavoriteCodes"),
-  codebookPayerScheduleJson: document.getElementById("codebookPayerScheduleJson"),
+  codebookPayerPlanSelect: document.getElementById("codebookPayerPlanSelect"),
+  codebookPayerCodeInput: document.getElementById("codebookPayerCodeInput"),
+  codebookPayerRateInput: document.getElementById("codebookPayerRateInput"),
+  codebookPayerAddBtn: document.getElementById("codebookPayerAddBtn"),
+  codebookPayerRemoveBtn: document.getElementById("codebookPayerRemoveBtn"),
+  codebookPayerScheduleList: document.getElementById("codebookPayerScheduleList"),
   insurancePlanAdminTools: document.getElementById("insurancePlanAdminTools"),
   insurancePlanAdminReadOnly: document.getElementById("insurancePlanAdminReadOnly"),
   insurancePlanAdminSelect: document.getElementById("insurancePlanAdminSelect"),
@@ -3205,6 +3210,133 @@ const renderCodebookExtensionLists = () => {
   );
 };
 
+const normalizePayerFeeSchedules = (payerFeeSchedules = {}) => {
+  const output = {};
+
+  if (payerFeeSchedules && typeof payerFeeSchedules === "object") {
+    for (const [planKeyRaw, planRatesRaw] of Object.entries(payerFeeSchedules)) {
+      const planKey = normalizeInsurancePlanKey(planKeyRaw);
+      if (!planKey) continue;
+      const planRates = {};
+      if (planRatesRaw && typeof planRatesRaw === "object") {
+        for (const [codeRaw, amountRaw] of Object.entries(planRatesRaw)) {
+          const code = normalizeCode(codeRaw);
+          const amount = Number(amountRaw);
+          if (!looksLikeCptCode(code)) continue;
+          if (!Number.isFinite(amount) || amount < 0) continue;
+          planRates[code] = Number(amount.toFixed(2));
+        }
+      }
+      output[planKey] = planRates;
+    }
+  }
+
+  return output;
+};
+
+const getPayerSchedulePlanOptions = () => {
+  const insuranceEntries = getInsurancePlanEntries();
+  const insuranceByKey = Object.fromEntries(insuranceEntries.map((entry) => [entry.key, entry]));
+  const fromSchedules = Object.keys(state.codebook.extensions?.payerFeeSchedules || {}).map(
+    normalizeInsurancePlanKey
+  );
+  const keys = uniqueCodes([
+    ...DEFAULT_INSURANCE_PLAN_KEYS,
+    ...insuranceEntries.map((entry) => entry.key),
+    ...fromSchedules,
+  ]).map(normalizeInsurancePlanKey);
+
+  return keys
+    .filter(Boolean)
+    .map((key) => ({
+      key,
+      label: insuranceByKey[key]?.name || toInsuranceLabel(key),
+    }))
+    .sort((left, right) => left.label.localeCompare(right.label));
+};
+
+const ensureSelectedPayerSchedulePlan = () => {
+  const options = getPayerSchedulePlanOptions();
+  const requested = normalizeInsurancePlanKey(ui.codebookPayerPlanSelect?.value || "");
+  const active = options.find((item) => item.key === requested) || options[0] || { key: "medicare", label: "Medicare" };
+  if (ui.codebookPayerPlanSelect) {
+    ui.codebookPayerPlanSelect.innerHTML = options
+      .map((item) => `<option value="${escapeHtml(item.key)}">${escapeHtml(item.label)}</option>`)
+      .join("");
+    ui.codebookPayerPlanSelect.value = active.key;
+  }
+  if (!state.codebook.extensions.payerFeeSchedules || typeof state.codebook.extensions.payerFeeSchedules !== "object") {
+    state.codebook.extensions.payerFeeSchedules = {};
+  }
+  if (!state.codebook.extensions.payerFeeSchedules[active.key]) {
+    state.codebook.extensions.payerFeeSchedules[active.key] = {};
+  }
+  return active.key;
+};
+
+const renderPayerScheduleEditor = () => {
+  const activePlanKey = ensureSelectedPayerSchedulePlan();
+  const schedule =
+    state.codebook.extensions?.payerFeeSchedules?.[activePlanKey] &&
+    typeof state.codebook.extensions.payerFeeSchedules[activePlanKey] === "object"
+      ? state.codebook.extensions.payerFeeSchedules[activePlanKey]
+      : {};
+  const entries = Object.entries(schedule)
+    .filter(([code, rate]) => looksLikeCptCode(code) && Number.isFinite(Number(rate)))
+    .sort((left, right) => String(left[0]).localeCompare(String(right[0])));
+
+  renderSimplePills(
+    ui.codebookPayerScheduleList,
+    entries.map(([code, rate]) => `${code}: ${formatCurrency(Number(rate))}`),
+    "No payer rates configured."
+  );
+};
+
+const addOrUpdatePayerScheduleRate = async () => {
+  const planKey = ensureSelectedPayerSchedulePlan();
+  const cptCode = normalizeCode(ui.codebookPayerCodeInput?.value || "");
+  const rate = Number(ui.codebookPayerRateInput?.value);
+
+  if (!looksLikeCptCode(cptCode)) {
+    addLog("Enter a valid 5-digit CPT code.", "warn");
+    return;
+  }
+  if (!Number.isFinite(rate) || rate < 0) {
+    addLog("Enter a valid non-negative fee rate.", "warn");
+    return;
+  }
+
+  state.codebook.extensions.payerFeeSchedules = normalizePayerFeeSchedules(
+    state.codebook.extensions.payerFeeSchedules || {}
+  );
+  if (!state.codebook.extensions.payerFeeSchedules[planKey]) {
+    state.codebook.extensions.payerFeeSchedules[planKey] = {};
+  }
+  state.codebook.extensions.payerFeeSchedules[planKey][cptCode] = Number(rate.toFixed(2));
+  await saveCodebookExtensions();
+  if (ui.codebookPayerCodeInput) ui.codebookPayerCodeInput.value = cptCode;
+  if (ui.codebookPayerRateInput) ui.codebookPayerRateInput.value = String(Number(rate.toFixed(2)));
+  renderPayerScheduleEditor();
+  addLog(`Saved ${cptCode} for ${planKey}.`, "good");
+};
+
+const removePayerScheduleRate = async () => {
+  const planKey = ensureSelectedPayerSchedulePlan();
+  const cptCode = normalizeCode(ui.codebookPayerCodeInput?.value || "");
+  if (!looksLikeCptCode(cptCode)) {
+    addLog("Enter a valid 5-digit CPT code to remove.", "warn");
+    return;
+  }
+  if (!state.codebook.extensions?.payerFeeSchedules?.[planKey]?.[cptCode]) {
+    addLog(`${cptCode} not found under ${planKey}.`, "warn");
+    return;
+  }
+  delete state.codebook.extensions.payerFeeSchedules[planKey][cptCode];
+  await saveCodebookExtensions();
+  renderPayerScheduleEditor();
+  addLog(`Removed ${cptCode} from ${planKey}.`, "good");
+};
+
 const setInsurancePlanAdminRoleAccess = () => {
   const isAdmin = String(state.auth.user?.role || "") === "admin";
   if (ui.insurancePlanAdminTools) {
@@ -3308,6 +3440,7 @@ const saveInsurancePlanFromAdminForm = async () => {
   await saveCodebookExtensions();
   renderInsurancePlanAdminUi({ selectedKey: plan.key });
   renderInsurancePlanOptions();
+  renderPayerScheduleEditor();
   addLog(`Insurance plan ${plan.key} saved.`, "good");
 };
 
@@ -3331,16 +3464,18 @@ const deleteInsurancePlanFromAdminForm = async () => {
   await saveCodebookExtensions();
   renderInsurancePlanAdminUi();
   renderInsurancePlanOptions();
+  renderPayerScheduleEditor();
   addLog(`Insurance plan ${key} removed.`, "good");
 };
 
 const loadCodebookExtensions = async () => {
   const payload = await api("/api/codebook/extensions");
   const extensions = payload?.extensions || {};
-  const payerFeeSchedules =
+  const payerFeeSchedulesRaw =
     extensions.payerFeeSchedules && typeof extensions.payerFeeSchedules === "object"
       ? extensions.payerFeeSchedules
       : {};
+  const payerFeeSchedules = normalizePayerFeeSchedules(payerFeeSchedulesRaw);
   const insurancePlans = normalizeInsurancePlans(extensions.insurancePlans || {}, payerFeeSchedules);
   state.codebook.extensions = {
     favoriteCodesByDoctor: extensions.favoriteCodesByDoctor || {},
@@ -3359,15 +3494,8 @@ const loadCodebookExtensions = async () => {
   const favorites = state.codebook.extensions.favoriteCodesByDoctor?.[selectedDoctorRef] || [];
   if (ui.codebookFavoriteCodes) ui.codebookFavoriteCodes.value = favorites.join(", ");
 
-  if (ui.codebookPayerScheduleJson) {
-    ui.codebookPayerScheduleJson.value = JSON.stringify(
-      state.codebook.extensions.payerFeeSchedules || {},
-      null,
-      2
-    );
-  }
-
   renderCodebookExtensionLists();
+  renderPayerScheduleEditor();
   setInsurancePlanAdminRoleAccess();
   renderInsurancePlanAdminUi();
   renderInsurancePlanOptions();
@@ -3381,11 +3509,9 @@ const saveCodebookExtensions = async () => {
     .map((code) => code.trim().toUpperCase())
     .filter(Boolean);
 
-  let payerFeeSchedules = state.codebook.extensions.payerFeeSchedules || {};
-  const rawPayerJson = String(ui.codebookPayerScheduleJson?.value || "").trim();
-  if (rawPayerJson) {
-    payerFeeSchedules = JSON.parse(rawPayerJson);
-  }
+  const payerFeeSchedules = normalizePayerFeeSchedules(
+    state.codebook.extensions.payerFeeSchedules || {}
+  );
 
   const nextExtensions = {
     ...state.codebook.extensions,
@@ -3415,12 +3541,13 @@ const saveCodebookExtensions = async () => {
       : {};
   state.codebook.extensions = {
     favoriteCodesByDoctor: saved.favoriteCodesByDoctor || {},
-    payerFeeSchedules: savedPayerSchedules,
+    payerFeeSchedules: normalizePayerFeeSchedules(savedPayerSchedules),
     insurancePlans: normalizeInsurancePlans(saved.insurancePlans || {}, savedPayerSchedules),
     customRules: Array.isArray(saved.customRules) ? saved.customRules : [],
     bundlingRules: Array.isArray(saved.bundlingRules) ? saved.bundlingRules : [],
   };
   renderCodebookExtensionLists();
+  renderPayerScheduleEditor();
   renderInsurancePlanAdminUi();
   renderInsurancePlanOptions();
   if (ui.codebookExtensionsStatus) {
@@ -4231,6 +4358,24 @@ const bindCodebook = () => {
     const doctorRef = String(ui.codebookFavoriteDoctorRef.value || "default").trim() || "default";
     const favorites = state.codebook.extensions.favoriteCodesByDoctor?.[doctorRef] || [];
     if (ui.codebookFavoriteCodes) ui.codebookFavoriteCodes.value = favorites.join(", ");
+  });
+
+  ui.codebookPayerPlanSelect?.addEventListener("change", () => {
+    renderPayerScheduleEditor();
+  });
+  ui.codebookPayerCodeInput?.addEventListener("input", () => {
+    const code = normalizeCode(ui.codebookPayerCodeInput?.value || "");
+    if (ui.codebookPayerCodeInput) ui.codebookPayerCodeInput.value = code;
+  });
+  ui.codebookPayerAddBtn?.addEventListener("click", () => {
+    addOrUpdatePayerScheduleRate().catch((error) =>
+      addLog(`Unable to save payer fee rate: ${error.message}`, "warn")
+    );
+  });
+  ui.codebookPayerRemoveBtn?.addEventListener("click", () => {
+    removePayerScheduleRate().catch((error) =>
+      addLog(`Unable to remove payer fee rate: ${error.message}`, "warn")
+    );
   });
 
   ui.insurancePlanAdminSelect?.addEventListener("change", () => {

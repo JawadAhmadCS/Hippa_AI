@@ -2327,7 +2327,7 @@ Follow-up / orders:"></textarea>
         </div>
         <div class="setup-body settings-grid" style="border-top:1px solid var(--border);">
           <div class="info-card">
-            <h3>Favorites + Payer Fee Schedules</h3>
+            <h3>Favorites + Payer Rates</h3>
             <div class="form-field">
               <label class="form-label" for="codebookFavoriteDoctorRef">Doctor Ref</label>
               <input class="form-input" id="codebookFavoriteDoctorRef" placeholder="e.g. DR-001" />
@@ -2337,8 +2337,30 @@ Follow-up / orders:"></textarea>
               <input class="form-input" id="codebookFavoriteCodes" placeholder="e.g. 99213, 99490" />
             </div>
             <div class="form-field">
-              <label class="form-label" for="codebookPayerScheduleJson">Payer-specific Fee Schedules (JSON)</label>
-              <textarea class="form-input" id="codebookPayerScheduleJson" rows="8" style="height:auto;padding:10px;"></textarea>
+              <label class="form-label" for="codebookPayerPlanSelect">Payer Fee Schedule (User Friendly)</label>
+              <div class="tiny-note" style="margin-bottom:8px;">
+                Select insurance plan, add CPT code + fee rate, and save. No JSON editing needed.
+              </div>
+              <div class="form-grid">
+                <div class="form-field">
+                  <label class="form-label" for="codebookPayerPlanSelect">Insurance Plan</label>
+                  <select class="form-select" id="codebookPayerPlanSelect"></select>
+                </div>
+                <div class="form-field">
+                  <label class="form-label" for="codebookPayerCodeInput">CPT Code</label>
+                  <input class="form-input" id="codebookPayerCodeInput" placeholder="e.g. 99214" />
+                </div>
+                <div class="form-field">
+                  <label class="form-label" for="codebookPayerRateInput">Fee Rate (USD)</label>
+                  <input class="form-input" id="codebookPayerRateInput" type="number" min="0" step="0.01" placeholder="e.g. 145.50" />
+                </div>
+              </div>
+              <div class="inline-actions" style="margin-top:8px;">
+                <button class="btn btn-ghost" id="codebookPayerAddBtn" type="button">Add / Update Rate</button>
+                <button class="btn btn-ghost" id="codebookPayerRemoveBtn" type="button">Remove CPT Rate</button>
+              </div>
+              <div class="helper-text" style="margin-top:8px;">Current Plan Fee Schedule</div>
+              <div class="pill-list" id="codebookPayerScheduleList"><span class="pill">No payer rates configured.</span></div>
             </div>
             <div class="inline-actions">
               <button class="btn btn-primary" id="saveCodebookExtensionsBtn" type="button">Save Extensions</button>
