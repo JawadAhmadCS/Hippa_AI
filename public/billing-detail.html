@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Billing Detail</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #f6f8fc;
+      --surface: #ffffff;
+      --surface2: #f8fafc;
+      --text: #0f172a;
+      --muted: #64748b;
+      --border: #dbe3ef;
+      --blue: #2563eb;
+      --good: #059669;
+      --warn: #d97706;
+      --danger: #dc2626;
+      --radius: 12px;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: "Plus Jakarta Sans", sans-serif;
+    }
+    .page {
+      max-width: 1320px;
+      margin: 0 auto;
+      padding: 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 14px 16px;
+    }
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .title {
+      margin: 0;
+      font-size: 18px;
+      font-weight: 700;
+    }
+    .subtitle {
+      margin-top: 4px;
+      font-size: 12px;
+      color: var(--muted);
+      font-family: "IBM Plex Mono", monospace;
+    }
+    .actions {
+      display: inline-flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .btn {
+      border: 1px solid var(--border);
+      background: var(--surface2);
+      color: var(--text);
+      font: inherit;
+      font-size: 13px;
+      font-weight: 600;
+      border-radius: 9px;
+      height: 34px;
+      padding: 0 12px;
+      cursor: pointer;
+    }
+    .btn.primary {
+      background: var(--blue);
+      color: #fff;
+      border-color: #1d4ed8;
+    }
+    .pill-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 4px 10px;
+      font-size: 12px;
+      font-weight: 600;
+      background: #fff;
+    }
+    .pill.warn {
+      border-color: #f59e0b;
+      color: #92400e;
+      background: #fff7ed;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: 1.5fr 1fr;
+      gap: 14px;
+    }
+    .section-title {
+      margin: 0 0 8px 0;
+      font-size: 14px;
+      font-weight: 700;
+    }
+    .mono {
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 12px;
+      color: var(--muted);
+      white-space: pre-wrap;
+      line-height: 1.55;
+    }
+    .note-box {
+      min-height: 240px;
+      max-height: 320px;
+      overflow: auto;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: var(--surface2);
+      padding: 10px;
+      white-space: pre-wrap;
+      line-height: 1.6;
+      font-size: 13px;
+    }
+    .transcript-box {
+      min-height: 240px;
+      max-height: 340px;
+      overflow: auto;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: var(--surface2);
+      padding: 10px;
+      white-space: pre-wrap;
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 12px;
+      line-height: 1.55;
+    }
+    .stack {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    .helper {
+      font-size: 11px;
+      color: var(--muted);
+      margin: 0 0 6px 0;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      font-family: "IBM Plex Mono", monospace;
+    }
+    .empty {
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .audio-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .status {
+      margin: 0;
+      font-size: 12px;
+      color: var(--muted);
+      font-family: "IBM Plex Mono", monospace;
+    }
+    .status.good { color: var(--good); }
+    .status.warn { color: var(--warn); }
+    .status.danger { color: var(--danger); }
+    @media (max-width: 980px) {
+      .grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <section class="card header">
+      <div>
+        <h1 class="title">Billing Appointment Detail</h1>
+        <div class="subtitle" id="appointmentHeaderMeta">Loading appointment...</div>
+      </div>
+      <div class="actions">
+        <button class="btn" id="refreshBtn" type="button">Refresh</button>
+        <button class="btn" id="closeBtn" type="button">Close</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="pill-row" id="patientSummaryPills">
+        <span class="pill">Loading patient summary...</span>
+      </div>
+      <p class="status" id="pageStatus"></p>
+    </section>
+
+    <section class="grid">
+      <div class="stack">
+        <div class="card">
+          <h2 class="section-title">Finalized Notes</h2>
+          <div class="note-box" id="finalizedNotesBox">Loading finalized notes...</div>
+        </div>
+        <div class="card">
+          <h2 class="section-title">Transcript</h2>
+          <div class="transcript-box" id="transcriptBox">Loading transcript...</div>
+        </div>
+      </div>
+      <div class="stack">
+        <div class="card">
+          <h2 class="section-title">Insurance Plan Code Profile</h2>
+          <p class="helper">Allowed ICD-10</p>
+          <div class="pill-row" id="policyIcdPills"><span class="pill">Loading...</span></div>
+          <p class="helper" style="margin-top:10px;">Allowed CPT</p>
+          <div class="pill-row" id="policyCptPills"><span class="pill">Loading...</span></div>
+        </div>
+        <div class="card">
+          <h2 class="section-title">Suggested ICD-10</h2>
+          <div class="pill-row" id="icdPills"><span class="pill">Loading...</span></div>
+        </div>
+        <div class="card">
+          <h2 class="section-title">Suggested CPT</h2>
+          <div class="pill-row" id="cptPills"><span class="pill">Loading...</span></div>
+        </div>
+        <div class="card">
+          <h2 class="section-title">Finalized Billing Codes</h2>
+          <div class="pill-row" id="approvedCodePills"><span class="pill">Loading...</span></div>
+        </div>
+        <div class="card">
+          <h2 class="section-title">Audio Recording</h2>
+          <div class="audio-row">
+            <button class="btn primary" id="playAudioBtn" type="button" disabled>Play</button>
+            <span class="mono" id="audioMeta">No recording loaded.</span>
+          </div>
+          <audio id="audioPlayer" controls preload="none" style="width:100%;margin-top:10px;"></audio>
+        </div>
+      </div>
+    </section>
+  </main>
+  <script src="/billing-detail.js" type="module"></script>
+</body>
+</html>

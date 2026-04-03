@@ -67,6 +67,7 @@
     extensions: {
       favoriteCodesByDoctor: {},
       payerFeeSchedules: {},
+      insurancePlans: {},
       customRules: [],
       bundlingRules: [],
     },
@@ -102,6 +103,7 @@ const ui = {
   patientHeaderDobInput: document.getElementById("patientHeaderDobInput"),
   patientHeaderIdInput: document.getElementById("patientHeaderIdInput"),
   patientHeaderInsurance: document.getElementById("patientHeaderInsurance"),
+  insurancePlanOptions: document.getElementById("insurancePlanOptions"),
   consentFormId: document.getElementById("consentFormId"),
   insurancePlan: document.getElementById("insurancePlan"),
   visitType: document.getElementById("visitType"),
@@ -251,6 +253,18 @@ const ui = {
   codebookFavoriteDoctorRef: document.getElementById("codebookFavoriteDoctorRef"),
   codebookFavoriteCodes: document.getElementById("codebookFavoriteCodes"),
   codebookPayerScheduleJson: document.getElementById("codebookPayerScheduleJson"),
+  insurancePlanAdminTools: document.getElementById("insurancePlanAdminTools"),
+  insurancePlanAdminReadOnly: document.getElementById("insurancePlanAdminReadOnly"),
+  insurancePlanAdminSelect: document.getElementById("insurancePlanAdminSelect"),
+  insurancePlanAdminKey: document.getElementById("insurancePlanAdminKey"),
+  insurancePlanAdminName: document.getElementById("insurancePlanAdminName"),
+  insurancePlanAdminMultiplier: document.getElementById("insurancePlanAdminMultiplier"),
+  insurancePlanAdminCpt: document.getElementById("insurancePlanAdminCpt"),
+  insurancePlanAdminIcd: document.getElementById("insurancePlanAdminIcd"),
+  insurancePlanAdminNewBtn: document.getElementById("insurancePlanAdminNewBtn"),
+  insurancePlanAdminSaveBtn: document.getElementById("insurancePlanAdminSaveBtn"),
+  insurancePlanAdminDeleteBtn: document.getElementById("insurancePlanAdminDeleteBtn"),
+  insurancePlanAdminList: document.getElementById("insurancePlanAdminList"),
   saveCodebookExtensionsBtn: document.getElementById("saveCodebookExtensionsBtn"),
   codebookExtensionsStatus: document.getElementById("codebookExtensionsStatus"),
   codebookRuleTrigger: document.getElementById("codebookRuleTrigger"),
@@ -425,6 +439,92 @@ const uniqueCodes = (values = []) => {
     out.push(normalized);
   }
   return out;
+};
+
+const DEFAULT_INSURANCE_PLAN_KEYS = ["medicare", "commercial", "medicaid", "self-pay"];
+
+const normalizeInsurancePlanKey = (value = "") =>
+  String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9-_\s]/g, "")
+    .replace(/\s+/g, "-");
+
+const parseCodeInput = (value = "") =>
+  uniqueCodes(
+    String(value || "")
+      .split(",")
+      .map((item) => String(item || "").trim())
+      .filter(Boolean)
+  );
+
+const normalizeInsurancePlans = (insurancePlans = {}, payerFeeSchedules = {}) => {
+  const map = {};
+
+  const applyOne = (key, value = {}) => {
+    const normalizedKey = normalizeInsurancePlanKey(key || value?.key || value?.id);
+    if (!normalizedKey) return;
+    const name = String(value?.name || value?.displayName || toInsuranceLabel(normalizedKey)).trim();
+    const cptCodes = uniqueCodes(
+      (Array.isArray(value?.cptCodes) ? value.cptCodes : [])
+        .map((item) => normalizeCode(item))
+        .filter((code) => looksLikeCptCode(code))
+    );
+    const icdCodes = uniqueCodes(
+      (Array.isArray(value?.icdCodes) ? value.icdCodes : [])
+        .map((item) => normalizeCode(item))
+        .filter((code) => looksLikeIcd10Code(code))
+    );
+    const multiplier = Number(value?.reimbursementMultiplier);
+    map[normalizedKey] = {
+      key: normalizedKey,
+      name: name || toInsuranceLabel(normalizedKey),
+      cptCodes,
+      icdCodes,
+      reimbursementMultiplier: Number.isFinite(multiplier) && multiplier > 0 ? Number(multiplier.toFixed(4)) : null,
+    };
+  };
+
+  if (Array.isArray(insurancePlans)) {
+    insurancePlans.forEach((item) => applyOne(item?.key || item?.id || item?.name, item));
+  } else if (insurancePlans && typeof insurancePlans === "object") {
+    for (const [key, value] of Object.entries(insurancePlans)) {
+      applyOne(key, value || {});
+    }
+  }
+
+  const payerKeys = payerFeeSchedules && typeof payerFeeSchedules === "object"
+    ? Object.keys(payerFeeSchedules)
+    : [];
+  for (const key of [...DEFAULT_INSURANCE_PLAN_KEYS, ...payerKeys]) {
+    const normalizedKey = normalizeInsurancePlanKey(key);
+    if (!normalizedKey) continue;
+    if (!map[normalizedKey]) {
+      map[normalizedKey] = {
+        key: normalizedKey,
+        name: toInsuranceLabel(normalizedKey),
+        cptCodes: [],
+        icdCodes: [],
+        reimbursementMultiplier: null,
+      };
+    }
+  }
+
+  return map;
+};
+
+const getInsurancePlanEntries = () =>
+  Object.values(state.codebook.extensions?.insurancePlans || {}).sort((left, right) =>
+    String(left?.name || left?.key || "").localeCompare(String(right?.name || right?.key || ""))
+  );
+
+const renderInsurancePlanOptions = () => {
+  if (!ui.insurancePlanOptions) return;
+  const entries = getInsurancePlanEntries();
+  const options = entries.length
+    ? entries.map((item) => `<option value="${escapeHtml(item.key)}"></option>`).join("")
+    : DEFAULT_INSURANCE_PLAN_KEYS.map((key) => `<option value="${escapeHtml(key)}"></option>`).join("");
+  ui.insurancePlanOptions.innerHTML = options;
 };
 
 const setTextContent = (element, value) => {
@@ -607,6 +707,7 @@ const applyRoleViewAccess = () => {
   if (!allowed.includes(state.currentView)) {
     state.currentView = allowed[0] || "live";
   }
+  setInsurancePlanAdminRoleAccess();
 };
 
 const resetLoadedViews = () => {
@@ -1684,9 +1785,14 @@ const renderBillingQueue = (queue = []) => {
     .map(
       (item) => {
         const patientProfile = normalizePatientProfile(item?.patientProfile || {}, item?.patientRef || "");
-        const firstName = patientProfile.firstName || "-";
-        const lastName = patientProfile.lastName || "-";
-        const dob = patientProfile.dob ? formatDateOnly(patientProfile.dob) : "-";
+        const patientName =
+          patientProfile.fullName || [patientProfile.firstName, patientProfile.lastName].filter(Boolean).join(" ") || "-";
+        const insurancePlan = String(
+          item?.insurancePlanName ||
+            patientProfile.insuranceInfo ||
+            item?.insurancePlan ||
+            "-"
+        ).trim();
         const appointmentTime = formatDateTime(item?.appointmentTime || item?.finalizedAt);
         return `
       <tr>
@@ -1697,9 +1803,8 @@ const renderBillingQueue = (queue = []) => {
             ${escapeHtml(item.appointmentId || "-")}
           </button>
         </td>
-        <td>${escapeHtml(firstName)}</td>
-        <td>${escapeHtml(lastName)}</td>
-        <td>${escapeHtml(dob)}</td>
+        <td>${escapeHtml(patientName)}</td>
+        <td>${escapeHtml(insurancePlan || "-")}</td>
         <td>${escapeHtml(appointmentTime)}</td>
         <td>${escapeHtml(formatCurrency(item.expectedRevenueFromAppointment || 0))}</td>
         <td><button class="btn btn-ghost" type="button" data-billing-open="${escapeHtml(
@@ -1710,7 +1815,7 @@ const renderBillingQueue = (queue = []) => {
     )
     .join("");
 
-  renderTableBody(ui.billingQueueBody, rowsHtml, 7, "No finalized notes available.");
+  renderTableBody(ui.billingQueueBody, rowsHtml, 6, "No finalized notes available.");
   if (ui.billingQueueSummary) {
     ui.billingQueueSummary.textContent = `${state.billing.queue.length} finalized encounter${
       state.billing.queue.length === 1 ? "" : "s"
@@ -1721,9 +1826,14 @@ const renderBillingQueue = (queue = []) => {
     button.addEventListener("click", () => {
       const appointmentId = button.getAttribute("data-billing-open");
       if (!appointmentId) return;
-      loadBillingFinalNote(appointmentId).catch((error) =>
-        addLog(`Billing final note load failed: ${error.message}`, "warn")
+      const popup = window.open(
+        `/billing-detail.html?appointmentId=${encodeURIComponent(appointmentId)}`,
+        "_blank",
+        "noopener,noreferrer,width=1320,height=920"
       );
+      if (!popup) {
+        addLog("Billing detail popup was blocked by the browser.", "warn");
+      }
     });
   });
 };
@@ -3069,12 +3179,147 @@ const renderCodebookExtensionLists = () => {
   );
 };
 
+const setInsurancePlanAdminRoleAccess = () => {
+  const isAdmin = String(state.auth.user?.role || "") === "admin";
+  if (ui.insurancePlanAdminTools) {
+    ui.insurancePlanAdminTools.style.display = isAdmin ? "" : "none";
+  }
+  if (ui.insurancePlanAdminReadOnly) {
+    ui.insurancePlanAdminReadOnly.style.display = isAdmin ? "none" : "";
+  }
+};
+
+const readInsurancePlanAdminForm = () => {
+  const key = normalizeInsurancePlanKey(ui.insurancePlanAdminKey?.value || "");
+  const name = String(ui.insurancePlanAdminName?.value || "").trim();
+  const cptCodes = parseCodeInput(ui.insurancePlanAdminCpt?.value || "").filter((code) => looksLikeCptCode(code));
+  const icdCodes = parseCodeInput(ui.insurancePlanAdminIcd?.value || "").filter((code) => looksLikeIcd10Code(code));
+  const multiplierRaw = String(ui.insurancePlanAdminMultiplier?.value || "").trim();
+  const multiplier = Number(multiplierRaw);
+  return {
+    key,
+    name: name || toInsuranceLabel(key),
+    cptCodes,
+    icdCodes,
+    reimbursementMultiplier: Number.isFinite(multiplier) && multiplier > 0 ? Number(multiplier.toFixed(4)) : null,
+  };
+};
+
+const setInsurancePlanAdminForm = (plan = null) => {
+  if (ui.insurancePlanAdminKey) ui.insurancePlanAdminKey.value = String(plan?.key || "");
+  if (ui.insurancePlanAdminName) ui.insurancePlanAdminName.value = String(plan?.name || "");
+  if (ui.insurancePlanAdminMultiplier) {
+    ui.insurancePlanAdminMultiplier.value =
+      plan?.reimbursementMultiplier && Number(plan.reimbursementMultiplier) > 0
+        ? String(plan.reimbursementMultiplier)
+        : "";
+  }
+  if (ui.insurancePlanAdminCpt) ui.insurancePlanAdminCpt.value = (plan?.cptCodes || []).join(", ");
+  if (ui.insurancePlanAdminIcd) ui.insurancePlanAdminIcd.value = (plan?.icdCodes || []).join(", ");
+};
+
+const renderInsurancePlanAdminUi = ({ selectedKey = "" } = {}) => {
+  const entries = getInsurancePlanEntries();
+  const preferredKey = normalizeInsurancePlanKey(selectedKey) || normalizeInsurancePlanKey(ui.insurancePlanAdminSelect?.value || "");
+  const active = entries.find((item) => item.key === preferredKey) || entries[0] || null;
+
+  if (ui.insurancePlanAdminSelect) {
+    ui.insurancePlanAdminSelect.innerHTML = entries.length
+      ? entries
+          .map(
+            (item) =>
+              `<option value="${escapeHtml(item.key)}">${escapeHtml(item.name)} (${escapeHtml(item.key)})</option>`
+          )
+          .join("")
+      : '<option value="">No plans</option>';
+    if (active?.key) {
+      ui.insurancePlanAdminSelect.value = active.key;
+    }
+  }
+
+  if (ui.insurancePlanAdminList) {
+    renderSimplePills(
+      ui.insurancePlanAdminList,
+      entries.map(
+        (item) =>
+          `${item.name} (${item.key}) | CPT ${item.cptCodes.length} | ICD ${item.icdCodes.length}${
+            item.reimbursementMultiplier ? ` | x${item.reimbursementMultiplier}` : ""
+          }`
+      ),
+      "No plans configured."
+    );
+  }
+
+  setInsurancePlanAdminForm(active);
+};
+
+const selectInsurancePlanFromAdminDropdown = () => {
+  const key = normalizeInsurancePlanKey(ui.insurancePlanAdminSelect?.value || "");
+  const selected = state.codebook.extensions?.insurancePlans?.[key] || null;
+  setInsurancePlanAdminForm(selected);
+};
+
+const saveInsurancePlanFromAdminForm = async () => {
+  if (String(state.auth.user?.role || "") !== "admin") {
+    addLog("Only admin users can manage insurance plans.", "warn");
+    return;
+  }
+  const plan = readInsurancePlanAdminForm();
+  if (!plan.key) {
+    addLog("Insurance plan key is required.", "warn");
+    return;
+  }
+  if (!state.codebook.extensions.insurancePlans || typeof state.codebook.extensions.insurancePlans !== "object") {
+    state.codebook.extensions.insurancePlans = {};
+  }
+  if (!state.codebook.extensions.payerFeeSchedules || typeof state.codebook.extensions.payerFeeSchedules !== "object") {
+    state.codebook.extensions.payerFeeSchedules = {};
+  }
+  state.codebook.extensions.insurancePlans[plan.key] = plan;
+  if (!state.codebook.extensions.payerFeeSchedules[plan.key]) {
+    state.codebook.extensions.payerFeeSchedules[plan.key] = {};
+  }
+  await saveCodebookExtensions();
+  renderInsurancePlanAdminUi({ selectedKey: plan.key });
+  renderInsurancePlanOptions();
+  addLog(`Insurance plan ${plan.key} saved.`, "good");
+};
+
+const deleteInsurancePlanFromAdminForm = async () => {
+  if (String(state.auth.user?.role || "") !== "admin") {
+    addLog("Only admin users can manage insurance plans.", "warn");
+    return;
+  }
+  const key = normalizeInsurancePlanKey(ui.insurancePlanAdminSelect?.value || ui.insurancePlanAdminKey?.value || "");
+  if (!key) return;
+  if (DEFAULT_INSURANCE_PLAN_KEYS.includes(key)) {
+    addLog(`Default plan ${key} cannot be deleted.`, "warn");
+    return;
+  }
+  if (state.codebook.extensions?.insurancePlans) {
+    delete state.codebook.extensions.insurancePlans[key];
+  }
+  if (state.codebook.extensions?.payerFeeSchedules) {
+    delete state.codebook.extensions.payerFeeSchedules[key];
+  }
+  await saveCodebookExtensions();
+  renderInsurancePlanAdminUi();
+  renderInsurancePlanOptions();
+  addLog(`Insurance plan ${key} removed.`, "good");
+};
+
 const loadCodebookExtensions = async () => {
   const payload = await api("/api/codebook/extensions");
   const extensions = payload?.extensions || {};
+  const payerFeeSchedules =
+    extensions.payerFeeSchedules && typeof extensions.payerFeeSchedules === "object"
+      ? extensions.payerFeeSchedules
+      : {};
+  const insurancePlans = normalizeInsurancePlans(extensions.insurancePlans || {}, payerFeeSchedules);
   state.codebook.extensions = {
     favoriteCodesByDoctor: extensions.favoriteCodesByDoctor || {},
-    payerFeeSchedules: extensions.payerFeeSchedules || {},
+    payerFeeSchedules,
+    insurancePlans,
     customRules: Array.isArray(extensions.customRules) ? extensions.customRules : [],
     bundlingRules: Array.isArray(extensions.bundlingRules) ? extensions.bundlingRules : [],
   };
@@ -3097,10 +3342,14 @@ const loadCodebookExtensions = async () => {
   }
 
   renderCodebookExtensionLists();
+  setInsurancePlanAdminRoleAccess();
+  renderInsurancePlanAdminUi();
+  renderInsurancePlanOptions();
 };
 
 const saveCodebookExtensions = async () => {
   const doctorRef = String(ui.codebookFavoriteDoctorRef?.value || "").trim() || "default";
+  const isAdmin = String(state.auth.user?.role || "") === "admin";
   const favoriteCodes = String(ui.codebookFavoriteCodes?.value || "")
     .split(",")
     .map((code) => code.trim().toUpperCase())
@@ -3119,14 +3368,35 @@ const saveCodebookExtensions = async () => {
       [doctorRef]: favoriteCodes,
     },
     payerFeeSchedules,
+    ...(isAdmin
+      ? {
+          insurancePlans: normalizeInsurancePlans(
+            state.codebook.extensions.insurancePlans || {},
+            payerFeeSchedules
+          ),
+        }
+      : {}),
   };
 
   const payload = await api("/api/codebook/extensions", {
     method: "PUT",
     body: JSON.stringify(nextExtensions),
   });
-  state.codebook.extensions = payload.extensions || nextExtensions;
+  const saved = payload.extensions || nextExtensions;
+  const savedPayerSchedules =
+    saved.payerFeeSchedules && typeof saved.payerFeeSchedules === "object"
+      ? saved.payerFeeSchedules
+      : {};
+  state.codebook.extensions = {
+    favoriteCodesByDoctor: saved.favoriteCodesByDoctor || {},
+    payerFeeSchedules: savedPayerSchedules,
+    insurancePlans: normalizeInsurancePlans(saved.insurancePlans || {}, savedPayerSchedules),
+    customRules: Array.isArray(saved.customRules) ? saved.customRules : [],
+    bundlingRules: Array.isArray(saved.bundlingRules) ? saved.bundlingRules : [],
+  };
   renderCodebookExtensionLists();
+  renderInsurancePlanAdminUi();
+  renderInsurancePlanOptions();
   if (ui.codebookExtensionsStatus) {
     ui.codebookExtensionsStatus.textContent = `Saved at ${new Date().toLocaleTimeString()}`;
   }
@@ -3919,6 +4189,24 @@ const bindCodebook = () => {
     const favorites = state.codebook.extensions.favoriteCodesByDoctor?.[doctorRef] || [];
     if (ui.codebookFavoriteCodes) ui.codebookFavoriteCodes.value = favorites.join(", ");
   });
+
+  ui.insurancePlanAdminSelect?.addEventListener("change", () => {
+    selectInsurancePlanFromAdminDropdown();
+  });
+  ui.insurancePlanAdminNewBtn?.addEventListener("click", () => {
+    setInsurancePlanAdminForm(null);
+    if (ui.insurancePlanAdminSelect) ui.insurancePlanAdminSelect.value = "";
+  });
+  ui.insurancePlanAdminSaveBtn?.addEventListener("click", () => {
+    saveInsurancePlanFromAdminForm().catch((error) =>
+      addLog(`Insurance plan save failed: ${error.message}`, "warn")
+    );
+  });
+  ui.insurancePlanAdminDeleteBtn?.addEventListener("click", () => {
+    deleteInsurancePlanFromAdminForm().catch((error) =>
+      addLog(`Insurance plan delete failed: ${error.message}`, "warn")
+    );
+  });
 };
 
 const completeAuthSession = (payload = {}) => {
@@ -4168,6 +4456,9 @@ const initializeViews = () => {
   const role = state.auth.user?.role || "";
   const prefs = readPreferences();
   applyPreferencesToUi(prefs);
+  if (["provider", "admin"].includes(role)) {
+    loadCodebookExtensions().catch(() => {});
+  }
 
   if (ui.reportGranularity) ui.reportGranularity.value = state.reportFilters.granularity;
 

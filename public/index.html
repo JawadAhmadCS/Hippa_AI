@@ -1918,47 +1918,24 @@ Follow-up / orders:"></textarea>
           </div>
         </div>
         <div class="setup-body">
-          <div class="split-two">
-            <div>
-              <table class="list-table">
-                <thead>
-                  <tr>
-                    <th>Appointment</th>
-                    <th>First Name</th>
-                    <th>Last Name</th>
-                    <th>DOB</th>
-                    <th>Appointment Time</th>
-                    <th>Expected Revenue</th>
-                    <th>Open</th>
-                  </tr>
-                </thead>
-                <tbody id="billingQueueBody">
-                  <tr><td colspan="7" class="tiny-note">No finalized notes available.</td></tr>
-                </tbody>
-              </table>
-            </div>
-            <div class="info-card">
-              <h3>Billing Appointment Details</h3>
-              <div class="helper-text">Patient Chart Summary</div>
-              <div class="tiny-note" id="billingPatientChartPreview">Select a finalized item from queue.</div>
-              <div class="helper-text" style="margin-top:12px;">Expected Revenue</div>
-              <div class="tiny-note" id="billingExpectedRevenue">$0.00</div>
-              <div class="helper-text" style="margin-top:12px;">Progress Notes</div>
-              <div class="tiny-note" id="billingFinalNotePreview">Select a finalized item from queue.</div>
-              <div class="helper-text" style="margin-top:12px;">Transcription Excerpts (View Only)</div>
-              <div class="tiny-note" id="billingTranscriptPreview">No transcript excerpts loaded.</div>
-              <div class="helper-text" style="margin-top:12px;">Appointment Audio Recording</div>
-              <div class="tiny-note" id="billingAudioPreview">No audio recordings loaded.</div>
-              <div class="helper-text" style="margin-top:12px;">All CPT Codes</div>
-              <div class="pill-list" id="billingRecommendedCpt"><span class="pill">No CPT codes loaded.</span></div>
-              <div class="helper-text" style="margin-top:12px;">All ICD-10 Codes</div>
-              <div class="pill-list" id="billingRecommendedIcd"><span class="pill">No ICD-10 codes loaded.</span></div>
-              <div class="helper-text" style="margin-top:12px;">Finalized Billing Codes</div>
-              <div class="pill-list" id="billingApprovedCodes"><span class="pill">No codes selected.</span></div>
-              <div class="helper-text" style="margin-top:12px;">Code Justification + Evidence</div>
-              <div class="pill-list" id="billingCodeEvidence"><span class="pill">No code evidence loaded.</span></div>
-            </div>
+          <div class="tiny-note" style="margin-bottom:12px;">
+            High-level queue only. Click <b>Open</b> to launch the full billing detail window with finalized notes, ICD-10, CPT, transcript, and audio playback.
           </div>
+          <table class="list-table">
+            <thead>
+              <tr>
+                <th>Appointment</th>
+                <th>Patient</th>
+                <th>Insurance Plan</th>
+                <th>Appointment Time</th>
+                <th>Expected Revenue</th>
+                <th>Open</th>
+              </tr>
+            </thead>
+            <tbody id="billingQueueBody">
+              <tr><td colspan="6" class="tiny-note">No finalized notes available.</td></tr>
+            </tbody>
+          </table>
         </div>
       </div>
     </div>
@@ -2372,6 +2349,49 @@ Follow-up / orders:"></textarea>
             <div class="inline-actions">
               <button class="btn btn-primary" id="saveCodebookExtensionsBtn" type="button">Save Extensions</button>
               <span class="tiny-note" id="codebookExtensionsStatus">Not saved yet</span>
+            </div>
+            <div class="divider"></div>
+            <div id="insurancePlanAdminTools">
+              <h3 style="margin-top:0;">Insurance Plans (Admin)</h3>
+              <div class="tiny-note" style="margin-bottom:8px;">
+                Add insurance plans with plan-specific CPT + ICD-10 code lists.
+              </div>
+              <div class="form-grid">
+                <div class="form-field">
+                  <label class="form-label" for="insurancePlanAdminSelect">Existing Plans</label>
+                  <select class="form-select" id="insurancePlanAdminSelect"></select>
+                </div>
+                <div class="form-field">
+                  <label class="form-label" for="insurancePlanAdminKey">Plan Key</label>
+                  <input class="form-input" id="insurancePlanAdminKey" placeholder="e.g. uhc-ppo" />
+                </div>
+                <div class="form-field">
+                  <label class="form-label" for="insurancePlanAdminName">Plan Display Name</label>
+                  <input class="form-input" id="insurancePlanAdminName" placeholder="e.g. UnitedHealthcare PPO" />
+                </div>
+                <div class="form-field">
+                  <label class="form-label" for="insurancePlanAdminMultiplier">Reimbursement Multiplier (optional)</label>
+                  <input class="form-input" id="insurancePlanAdminMultiplier" type="number" min="0" step="0.01" placeholder="e.g. 1.18" />
+                </div>
+                <div class="form-field" style="grid-column:1/-1;">
+                  <label class="form-label" for="insurancePlanAdminCpt">Allowed CPT Codes (comma-separated)</label>
+                  <textarea class="form-input" id="insurancePlanAdminCpt" rows="3" style="height:auto;padding:10px;" placeholder="e.g. 99214, 99406"></textarea>
+                </div>
+                <div class="form-field" style="grid-column:1/-1;">
+                  <label class="form-label" for="insurancePlanAdminIcd">Allowed ICD-10 Codes (comma-separated)</label>
+                  <textarea class="form-input" id="insurancePlanAdminIcd" rows="3" style="height:auto;padding:10px;" placeholder="e.g. I10, E78.5"></textarea>
+                </div>
+              </div>
+              <div class="inline-actions">
+                <button class="btn btn-ghost" id="insurancePlanAdminNewBtn" type="button">New</button>
+                <button class="btn btn-primary" id="insurancePlanAdminSaveBtn" type="button">Save Plan</button>
+                <button class="btn btn-ghost" id="insurancePlanAdminDeleteBtn" type="button">Delete Plan</button>
+              </div>
+              <div class="helper-text" style="margin-top:10px;">Configured Plans</div>
+              <div class="pill-list" id="insurancePlanAdminList"><span class="pill">No plans configured.</span></div>
+            </div>
+            <div class="tiny-note" id="insurancePlanAdminReadOnly" style="display:none;margin-top:8px;">
+              Insurance plan management is available for admin users.
             </div>
           </div>
           <div class="info-card">

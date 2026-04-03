@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { env } from "../config/env.js";
+import { getCodebookExtensions } from "./platform-config-service.js";
 
 const codebookPath = path.resolve(process.cwd(), "data", "cpt_codebook.json");
 let cached = null;
@@ -23,7 +24,18 @@ const writeCodebook = (codebook) => {
 };
 
 export const getPayerMultiplier = (insurancePlan) => {
-  const payer = String(insurancePlan || "medicare").toLowerCase();
+  const payer = String(insurancePlan || "medicare")
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9-_\s]/g, "")
+    .replace(/\s+/g, "-");
+  const extensions = getCodebookExtensions() || {};
+  const planMultiplier = Number(
+    extensions?.insurancePlans?.[payer]?.reimbursementMultiplier
+  );
+  if (Number.isFinite(planMultiplier) && planMultiplier > 0) {
+    return Number(planMultiplier);
+  }
   const codebook = getCodebook();
   return codebook.payerMultipliers[payer] ?? codebook.payerMultipliers.medicare ?? 1;
 };

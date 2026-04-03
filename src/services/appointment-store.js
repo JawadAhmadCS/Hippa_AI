@@ -182,6 +182,231 @@ const loadPersistedAppointments = () => {
   } catch {}
 };
 
+const seedDemoBillingAppointmentIfEmpty = () => {
+  const nowMs = Date.now();
+  const hasBillingReadyAppointment = Array.from(appointments.values()).some((appointment) => {
+    const workflow = appointment?.noteWorkflow || {};
+    if (String(workflow.status || "").toLowerCase() !== "finalized") return false;
+    if (!workflow.finalizedVersionId) return false;
+    const expiresAtMs = new Date(workflow?.delivery?.billingAccessExpiresAt || "").getTime();
+    if (Number.isFinite(expiresAtMs) && expiresAtMs <= nowMs) return false;
+    return true;
+  });
+  if (hasBillingReadyAppointment) return;
+
+  const createdAt = new Date(nowMs - 65 * 60 * 1000).toISOString();
+  const finalizedAt = new Date(nowMs - 24 * 60 * 1000).toISOString();
+  const retentionExpiresAt = new Date(nowMs + BILLING_ACCESS_RETENTION_MS).toISOString();
+  const noteId = crypto.randomUUID();
+  const versionId = crypto.randomUUID();
+
+  const suggestedCpt = [
+    {
+      code: "99214",
+      title: "Office/outpatient visit, established patient, moderate complexity",
+      confidence: 0.92,
+      rationale: "Chronic condition review, medication adjustment, and moderate MDM documented.",
+      mdmJustification: "Moderate complexity MDM supported by risk and management decisions.",
+      evidence: "History and plan include medication adjustment and risk discussion.",
+      evidenceRefs: ["seg-2", "seg-4"],
+      estimatedAmount: 137.7,
+    },
+    {
+      code: "99406",
+      title: "Smoking and tobacco cessation counseling visit, intermediate",
+      confidence: 0.84,
+      rationale: "Counseling time and cessation advice captured in transcript.",
+      mdmJustification: "Time-based counseling with explicit cessation plan was documented.",
+      evidence: "Provider advised quit strategy and follow-up counseling plan.",
+      evidenceRefs: ["seg-3"],
+      estimatedAmount: 18.84,
+    },
+  ];
+
+  const suggestedIcd = [
+    {
+      code: "I10",
+      description: "Essential (primary) hypertension",
+      confidence: 0.9,
+      rationale: "Hypertension management discussed with medication titration.",
+      evidence: "Blood pressure trend and treatment plan noted in visit.",
+      evidenceRefs: ["seg-2", "seg-4"],
+    },
+    {
+      code: "F17.210",
+      description: "Nicotine dependence, cigarettes, uncomplicated",
+      confidence: 0.82,
+      rationale: "Current smoking status and cessation counseling present.",
+      evidence: "Patient confirmed cigarette use and accepted cessation counseling.",
+      evidenceRefs: ["seg-3"],
+    },
+  ];
+
+  const analysisSnapshot = {
+    model: "demo-seed",
+    confidence: 0.9,
+    cptCodes: suggestedCpt,
+    icdCodes: suggestedIcd,
+    documentationImprovements: [
+      {
+        text: "Continue documenting counseling minutes for cessation follow-up visits.",
+      },
+    ],
+    justification:
+      "Codes reflect chronic disease follow-up, moderate MDM, and documented cessation counseling.",
+    revenueTracker: {
+      baseline: 96.11,
+      compliantOpportunity: 156.54,
+      projectedTotal: 156.54,
+      payerMultiplier: 1,
+      currentCodesRevenue: 96.11,
+      suggestedCodesRevenue: 156.54,
+      earnedNow: 156.54,
+      projectedRevenueWithSuggestions: 156.54,
+      billableCodes: suggestedCpt,
+    },
+  };
+
+  const seeded = hydrateAppointmentRecord({
+    id: "APPT-DEMO-BILLING-001",
+    patientRef: "PT-1042",
+    patientProfile: {
+      patientRef: "PT-1042",
+      externalChartId: "EHR-0001042",
+      fullName: "John Carter",
+      firstName: "John",
+      lastName: "Carter",
+      dob: "1981-06-14",
+      insuranceInfo: "Medicare",
+    },
+    patientChartId: "EHR-0001042",
+    doctorRef: "provider1",
+    doctorSpecialties: ["Internal Medicine"],
+    clientId: "north-hill-clinic",
+    clientName: "North Hill Clinic",
+    insurancePlan: "medicare",
+    visitType: "follow-up",
+    encounterMode: "in-person",
+    telehealthPlatform: "",
+    consentGiven: true,
+    consentFormId: "CONSENT-DEMO-0001",
+    consentSignedAt: createdAt,
+    createdAt,
+    transcriptSegments: [
+      {
+        id: "seg-1",
+        sequence: 1,
+        at: new Date(nowMs - 60 * 60 * 1000).toISOString(),
+        source: "demo-seed",
+        rawText: "Patient reports persistent elevated blood pressure readings at home.",
+        cleanedText: "Patient reports persistent elevated blood pressure readings at home.",
+      },
+      {
+        id: "seg-2",
+        sequence: 2,
+        at: new Date(nowMs - 57 * 60 * 1000).toISOString(),
+        source: "demo-seed",
+        rawText: "Provider adjusts antihypertensive medication and reviews monitoring plan.",
+        cleanedText: "Provider adjusts antihypertensive medication and reviews monitoring plan.",
+      },
+      {
+        id: "seg-3",
+        sequence: 3,
+        at: new Date(nowMs - 55 * 60 * 1000).toISOString(),
+        source: "demo-seed",
+        rawText: "Smoking cessation counseling provided for six minutes with follow-up resources.",
+        cleanedText: "Smoking cessation counseling provided for six minutes with follow-up resources.",
+      },
+      {
+        id: "seg-4",
+        sequence: 4,
+        at: new Date(nowMs - 53 * 60 * 1000).toISOString(),
+        source: "demo-seed",
+        rawText: "Plan includes blood pressure log and return visit in four weeks.",
+        cleanedText: "Plan includes blood pressure log and return visit in four weeks.",
+      },
+    ],
+    suggestions: suggestedCpt,
+    icdSuggestions: suggestedIcd,
+    revenueTracker: analysisSnapshot.revenueTracker,
+    recordings: [
+      {
+        provider: "demo-seed",
+        mimeType: "audio/wav",
+        location: "/assets/demo-appointment-audio.wav",
+        blobName: "demo/demo-appointment-audio.wav",
+        uploadedAt: new Date(nowMs - 23 * 60 * 1000).toISOString(),
+        retentionDays: BILLING_ACCESS_RETENTION_DAYS,
+        retentionExpiresAt,
+      },
+    ],
+    noteWorkflow: {
+      noteId,
+      status: "finalized",
+      locked: true,
+      currentVersionId: versionId,
+      finalizedVersionId: versionId,
+      finalizedAt,
+      versions: [
+        {
+          versionId,
+          versionNumber: 1,
+          versionType: "finalized",
+          isFinal: true,
+          createdBy: "provider1",
+          actorRole: "provider",
+          createdAt: finalizedAt,
+          finalizedBy: "provider1",
+          finalizedRole: "provider",
+          finalizedAt,
+          finalCodes: suggestedCpt.map((item) => item.code),
+          finalIcdCodes: suggestedIcd.map((item) => ({
+            code: item.code,
+            description: item.description,
+          })),
+          overrideReason: "",
+          analysisSnapshot,
+          contentJson: {
+            sections: {
+              hpi: "Established patient follow-up for hypertension and tobacco use review.",
+              ros: "Denies chest pain or dyspnea. Reports intermittent headaches.",
+              exam: "BP elevated in clinic. Cardiopulmonary exam otherwise stable.",
+              assessment:
+                "1) Essential hypertension, suboptimal control. 2) Tobacco dependence.",
+              plan:
+                "Increase antihypertensive dose, continue home BP log, tobacco cessation counseling completed, follow-up in 4 weeks.",
+            },
+            additionalProviderNotes:
+              "Counseling time documented. Patient agreed to cessation plan and medication adjustment.",
+            freeTextAdditions:
+              "Follow-up encounter finalized with medication adjustment for hypertension and smoking cessation counseling. Patient instructed on home BP monitoring and return precautions.",
+          },
+          diffFromPrior: {
+            changeCount: 10,
+          },
+        },
+      ],
+      currentAnalysis: analysisSnapshot,
+      overrideRecords: [],
+      delivery: {
+        ehrWriteStatus: "written",
+        ehrQueuedAt: finalizedAt,
+        ehrLastAttemptAt: finalizedAt,
+        ehrError: "",
+        ehrSentAt: finalizedAt,
+        billingSentAt: finalizedAt,
+        billingAccessExpiresAt: retentionExpiresAt,
+        billingRetentionDays: BILLING_ACCESS_RETENTION_DAYS,
+        ehrDestination: "Demo EHR",
+        ehrExternalRecordId: "EHR-DEMO-0001042",
+      },
+    },
+  });
+
+  appointments.set(seeded.id, seeded);
+  persistAppointments();
+};
+
 const normalizeNoteValue = (value) => String(value || "").trim();
 const mergeProviderAdditions = (content = {}) =>
   [
@@ -458,6 +683,7 @@ const buildAppointmentSummary = (appointment) => {
 };
 
 loadPersistedAppointments();
+seedDemoBillingAppointmentIfEmpty();
 
 export const createAppointment = ({
   patientRef,
@@ -989,6 +1215,7 @@ export const getFinalizedNotePacket = (appointmentId) => {
     appointmentTime: appointment.createdAt || null,
     patientRef: appointment.patientRef,
     patientProfile,
+    insurancePlan: String(appointment.insurancePlan || "").trim().toLowerCase(),
     patientChartId: appointment.patientChartId || "",
     doctorRef: appointment.doctorRef,
     doctorSpecialties: Array.isArray(appointment.doctorSpecialties) ? appointment.doctorSpecialties : [],

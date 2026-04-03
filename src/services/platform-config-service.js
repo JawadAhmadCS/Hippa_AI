@@ -36,6 +36,36 @@ const defaultConfig = () => ({
       medicaid: {},
       "self-pay": {},
     },
+    insurancePlans: {
+      medicare: {
+        key: "medicare",
+        name: "Medicare",
+        cptCodes: [],
+        icdCodes: [],
+        reimbursementMultiplier: 1,
+      },
+      commercial: {
+        key: "commercial",
+        name: "Commercial",
+        cptCodes: [],
+        icdCodes: [],
+        reimbursementMultiplier: 1.34,
+      },
+      medicaid: {
+        key: "medicaid",
+        name: "Medicaid",
+        cptCodes: [],
+        icdCodes: [],
+        reimbursementMultiplier: 0.81,
+      },
+      "self-pay": {
+        key: "self-pay",
+        name: "Self Pay",
+        cptCodes: [],
+        icdCodes: [],
+        reimbursementMultiplier: 0.58,
+      },
+    },
     customRules: [],
     bundlingRules: [],
   },
@@ -256,6 +286,50 @@ const sanitizeBundlingRule = (rule = {}) => ({
   updatedAt: new Date().toISOString(),
 });
 
+const sanitizeInsurancePlanKey = (value = "") =>
+  sanitizeString(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9-_\s]/g, "")
+    .replace(/\s+/g, "-");
+
+const sanitizeCodeList = (values = [], matcher = () => true) =>
+  Array.from(
+    new Set(
+      (Array.isArray(values) ? values : [])
+        .map((item) => sanitizeString(item).toUpperCase())
+        .filter((code) => code && matcher(code))
+    )
+  );
+
+const sanitizeInsurancePlans = (plans = {}) => {
+  const output = {};
+  const applyOne = (key, value = {}) => {
+    const normalizedKey = sanitizeInsurancePlanKey(key || value?.key || value?.id || value?.name);
+    if (!normalizedKey) return;
+    const multiplier = Number(value?.reimbursementMultiplier);
+    output[normalizedKey] = {
+      key: normalizedKey,
+      name: sanitizeString(value?.name || value?.displayName || normalizedKey) || normalizedKey,
+      cptCodes: sanitizeCodeList(value?.cptCodes || [], (code) => /^\d{5}$/.test(code)),
+      icdCodes: sanitizeCodeList(value?.icdCodes || [], (code) =>
+        /^[A-TV-Z][0-9][0-9A-Z](?:\.[0-9A-Z]{1,4})?$/.test(code)
+      ),
+      reimbursementMultiplier:
+        Number.isFinite(multiplier) && multiplier > 0 ? Number(multiplier.toFixed(4)) : null,
+    };
+  };
+
+  if (Array.isArray(plans)) {
+    plans.forEach((item) => applyOne(item?.key || item?.id || item?.name, item));
+  } else if (plans && typeof plans === "object") {
+    for (const [key, value] of Object.entries(plans)) {
+      applyOne(key, value || {});
+    }
+  }
+
+  return output;
+};
+
 export const getCodebookExtensions = () =>
   deepClone(readConfig().codebookExtensions || defaultConfig().codebookExtensions);
 
@@ -272,6 +346,10 @@ export const updateCodebookExtensions = (patch = {}) => {
         patch.payerFeeSchedules && typeof patch.payerFeeSchedules === "object"
           ? patch.payerFeeSchedules
           : current.payerFeeSchedules,
+      insurancePlans:
+        patch.insurancePlans && typeof patch.insurancePlans === "object"
+          ? sanitizeInsurancePlans(patch.insurancePlans)
+          : current.insurancePlans || defaultConfig().codebookExtensions.insurancePlans,
       customRules: Array.isArray(patch.customRules)
         ? patch.customRules.map((rule) => sanitizeCustomRule(rule))
         : current.customRules,

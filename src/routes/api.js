@@ -296,6 +296,130 @@ const buildPatientProfileForAppointment = ({
   };
 };
 
+const normalizeInsurancePlanKey = (value = "") =>
+  String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9-_\s]/g, "")
+    .replace(/\s+/g, "-");
+
+const isCptCode = (value = "") => /^\d{5}$/.test(String(value || "").trim().toUpperCase());
+const isIcd10Code = (value = "") =>
+  /^[A-TV-Z][0-9][0-9A-Z](?:\.[0-9A-Z]{1,4})?$/.test(String(value || "").trim().toUpperCase());
+
+const normalizeCodeArray = (values = [], matcher = () => true) =>
+  Array.from(
+    new Set(
+      (Array.isArray(values) ? values : [])
+        .map((item) =>
+          typeof item === "string" ? String(item || "").trim().toUpperCase() : String(item?.code || "").trim().toUpperCase()
+        )
+        .filter((code) => code && matcher(code))
+    )
+  );
+
+const getInsurancePlanDirectory = () => {
+  const extensions = getCodebookExtensions() || {};
+  const rawPlans =
+    extensions.insurancePlans && typeof extensions.insurancePlans === "object"
+      ? extensions.insurancePlans
+      : {};
+  const payerSchedules =
+    extensions.payerFeeSchedules && typeof extensions.payerFeeSchedules === "object"
+      ? extensions.payerFeeSchedules
+      : {};
+
+  const output = {};
+  const applyOne = (key, value = {}) => {
+    const planKey = normalizeInsurancePlanKey(key || value?.key || value?.id || value?.name);
+    if (!planKey) return;
+    const name = String(value?.name || value?.displayName || toInsuranceLabel(planKey)).trim() || toInsuranceLabel(planKey);
+    output[planKey] = {
+      key: planKey,
+      name,
+      cptCodes: normalizeCodeArray(value?.cptCodes || [], isCptCode),
+      icdCodes: normalizeCodeArray(value?.icdCodes || [], isIcd10Code),
+      reimbursementMultiplier: Number(value?.reimbursementMultiplier) > 0
+        ? Number(Number(value.reimbursementMultiplier).toFixed(4))
+        : null,
+    };
+  };
+
+  for (const [key, value] of Object.entries(rawPlans)) {
+    applyOne(key, value || {});
+  }
+
+  for (const key of ["medicare", "commercial", "medicaid", "self-pay", ...Object.keys(payerSchedules)]) {
+    const normalized = normalizeInsurancePlanKey(key);
+    if (!normalized) continue;
+    if (!output[normalized]) {
+      output[normalized] = {
+        key: normalized,
+        name: toInsuranceLabel(normalized),
+        cptCodes: [],
+        icdCodes: [],
+        reimbursementMultiplier: null,
+      };
+    }
+  }
+
+  return output;
+};
+
+const buildInsurancePolicyForPacket = (packet = {}) => {
+  const planDirectory = getInsurancePlanDirectory();
+  const planKey = normalizeInsurancePlanKey(packet.insurancePlan || packet.patientProfile?.insuranceInfo || "");
+  const selectedPlan = planDirectory[planKey] || null;
+  const policyCpt = normalizeCodeArray(selectedPlan?.cptCodes || [], isCptCode);
+  const policyIcd = normalizeCodeArray(selectedPlan?.icdCodes || [], isIcd10Code);
+  const policyCptSet = new Set(policyCpt);
+  const policyIcdSet = new Set(policyIcd);
+
+  const recommendedCpt = normalizeCodeArray(packet.recommendedCptCodes || [], isCptCode);
+  const recommendedIcd = normalizeCodeArray(packet.recommendedIcd10Codes || [], isIcd10Code);
+  const approvedCpt = normalizeCodeArray(packet.approvedCodes || [], isCptCode);
+  const approvedIcd = normalizeCodeArray(packet.approvedIcdCodes || [], isIcd10Code);
+
+  const outOfPlanRecommendedCpt = policyCpt.length
+    ? recommendedCpt.filter((code) => !policyCptSet.has(code))
+    : [];
+  const outOfPlanApprovedCpt = policyCpt.length ? approvedCpt.filter((code) => !policyCptSet.has(code)) : [];
+  const outOfPlanRecommendedIcd = policyIcd.length
+    ? recommendedIcd.filter((code) => !policyIcdSet.has(code))
+    : [];
+  const outOfPlanApprovedIcd = policyIcd.length ? approvedIcd.filter((code) => !policyIcdSet.has(code)) : [];
+
+  return {
+    planKey: selectedPlan?.key || planKey || "",
+    planName: selectedPlan?.name || toInsuranceLabel(planKey || packet.insurancePlan || "") || "",
+    cptCodes: policyCpt,
+    icdCodes: policyIcd,
+    reimbursementMultiplier:
+      Number(selectedPlan?.reimbursementMultiplier) > 0 ? Number(selectedPlan.reimbursementMultiplier) : null,
+    outOfPlanRecommendedCpt,
+    outOfPlanApprovedCpt,
+    outOfPlanRecommendedIcd,
+    outOfPlanApprovedIcd,
+  };
+};
+
+const resolveBillingPacketForRequest = ({ appointmentId = "", auth = null } = {}) => {
+  const packet = getFinalizedNotePacket(appointmentId);
+  if (!packet) return { packet: null, error: "No finalized note available for billing.", status: 404 };
+  if (packet.billingAccessExpired) {
+    return {
+      packet: null,
+      error: "Finalized note exceeded the 60-day billing portal retention window.",
+      status: 410,
+      billingAccessExpiresAt: packet.billingAccessExpiresAt,
+    };
+  }
+  if (auth?.clientId && packet.clientId && String(auth.clientId) !== String(packet.clientId)) {
+    return { packet: null, error: "Appointment is outside your clinic scope.", status: 403 };
+  }
+  return { packet, error: "", status: 200 };
+};
+
 const filterAppointments = ({
   search = "",
   dateFrom = "",
@@ -1126,6 +1250,7 @@ router.get(
   "/billing/queue",
   requireAuth({ roles: ["billing", "admin"] }),
   withAsync(async (request, response) => {
+    const planDirectory = getInsurancePlanDirectory();
     const queue = listAppointmentRecords()
       .filter((item) =>
         request.auth.clientId ? String(item.clientId || "") === String(request.auth.clientId) : true
@@ -1134,6 +1259,11 @@ router.get(
       .filter(Boolean)
       .filter((packet) => !packet.billingAccessExpired)
       .map((packet) => ({
+        insurancePlan: String(packet.insurancePlan || "").trim().toLowerCase(),
+        insurancePlanName:
+          planDirectory[normalizeInsurancePlanKey(packet.insurancePlan)]?.name ||
+          toInsuranceLabel(packet.insurancePlan || packet.patientProfile?.insuranceInfo || "") ||
+          "-",
         appointmentId: packet.appointmentId,
         appointmentTime: packet.appointmentTime || null,
         patientRef: packet.patientRef,
@@ -1158,27 +1288,77 @@ router.get(
   "/billing/appointments/:appointmentId/final",
   requireAuth({ roles: ["billing", "admin"] }),
   withAsync(async (request, response) => {
-    const packet = getFinalizedNotePacket(request.params.appointmentId);
-    if (!packet) {
-      response.status(404).json({ error: "No finalized note available for billing." });
-      return;
-    }
-    if (packet.billingAccessExpired) {
-      response.status(410).json({
-        error: "Finalized note exceeded the 60-day billing portal retention window.",
-        billingAccessExpiresAt: packet.billingAccessExpiresAt,
+    const resolved = resolveBillingPacketForRequest({
+      appointmentId: request.params.appointmentId,
+      auth: request.auth,
+    });
+    if (!resolved.packet) {
+      response.status(resolved.status || 400).json({
+        error: resolved.error || "Unable to load billing note.",
+        billingAccessExpiresAt: resolved.billingAccessExpiresAt || null,
       });
       return;
     }
-    if (
-      request.auth.clientId &&
-      packet.clientId &&
-      String(request.auth.clientId) !== String(packet.clientId)
-    ) {
-      response.status(403).json({ error: "Appointment is outside your clinic scope." });
+    const packet = resolved.packet;
+    response.json({
+      ...packet,
+      insurancePolicy: buildInsurancePolicyForPacket(packet),
+    });
+  })
+);
+
+router.get(
+  "/billing/appointments/:appointmentId/recordings/:recordingIndex/play",
+  requireAuth({ roles: ["billing", "admin"] }),
+  withAsync(async (request, response) => {
+    const resolved = resolveBillingPacketForRequest({
+      appointmentId: request.params.appointmentId,
+      auth: request.auth,
+    });
+    if (!resolved.packet) {
+      response.status(resolved.status || 400).json({
+        error: resolved.error || "Unable to load billing note.",
+      });
       return;
     }
-    response.json(packet);
+
+    const packet = resolved.packet;
+    const recordings = Array.isArray(packet.recordings) ? packet.recordings : [];
+    const index = Number(request.params.recordingIndex);
+    if (!Number.isInteger(index) || index < 0 || index >= recordings.length) {
+      response.status(404).json({ error: "Recording not found for appointment." });
+      return;
+    }
+
+    const recording = recordings[index] || {};
+    const location = String(recording.location || "").trim();
+    if (!location) {
+      response.status(404).json({ error: "Recording location unavailable." });
+      return;
+    }
+
+    if (/^https?:\/\//i.test(location)) {
+      response.redirect(location);
+      return;
+    }
+    if (/^\/assets\//i.test(location)) {
+      response.redirect(location);
+      return;
+    }
+
+    const absolutePath = path.isAbsolute(location)
+      ? location
+      : path.resolve(process.cwd(), location.replace(/^\/+/, ""));
+    try {
+      await fs.access(absolutePath);
+    } catch {
+      response.status(404).json({ error: "Recording file not found on server." });
+      return;
+    }
+    if (recording.mimeType) {
+      response.setHeader("Content-Type", recording.mimeType);
+    }
+    response.sendFile(absolutePath);
   })
 );
 
@@ -1738,6 +1918,13 @@ router.put(
   "/codebook/extensions",
   requireAuth({ roles: ["provider", "admin"] }),
   withAsync(async (request, response) => {
+    if (
+      Object.prototype.hasOwnProperty.call(request.body || {}, "insurancePlans") &&
+      request.auth.role !== "admin"
+    ) {
+      response.status(403).json({ error: "Only admin can update insurance plan definitions." });
+      return;
+    }
     const extensions = updateCodebookExtensions(request.body || {});
     fireAndForgetAudit("codebook.extensions.updated", {
       fieldsUpdated: Object.keys(request.body || {}),

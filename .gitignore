@@ -3,3 +3,4 @@ node_modules/
 uploads/
 *.log
 data/audit-log.ndjson
+data/appointments.json

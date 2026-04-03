@@ -30,6 +30,36 @@
       "medicaid": {},
       "self-pay": {}
     },
+    "insurancePlans": {
+      "medicare": {
+        "key": "medicare",
+        "name": "Medicare",
+        "cptCodes": [],
+        "icdCodes": [],
+        "reimbursementMultiplier": 1
+      },
+      "commercial": {
+        "key": "commercial",
+        "name": "Commercial",
+        "cptCodes": [],
+        "icdCodes": [],
+        "reimbursementMultiplier": 1.34
+      },
+      "medicaid": {
+        "key": "medicaid",
+        "name": "Medicaid",
+        "cptCodes": [],
+        "icdCodes": [],
+        "reimbursementMultiplier": 0.81
+      },
+      "self-pay": {
+        "key": "self-pay",
+        "name": "Self Pay",
+        "cptCodes": [],
+        "icdCodes": [],
+        "reimbursementMultiplier": 0.58
+      }
+    },
     "customRules": [],
     "bundlingRules": []
   },
