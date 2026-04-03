@@ -1,4 +1,4 @@
-const state = {
+﻿const state = {
   auth: {
     token: "",
     user: null,
@@ -39,6 +39,11 @@ const state = {
     codingAnalysis: null,
     autosaveTimer: null,
     finalEditorTouched: false,
+    activeAppointmentId: "",
+  },
+  noteQueue: {
+    items: [],
+    pollTimer: null,
   },
   billing: {
     queue: [],
@@ -127,6 +132,8 @@ const ui = {
   noteFinalMergedEditor: document.getElementById("noteFinalMergedEditor"),
   noteMergeStatus: document.getElementById("noteMergeStatus"),
   noteFinalStatus: document.getElementById("noteFinalStatus"),
+  providerNoteEditorCard: document.getElementById("providerNoteEditorCard"),
+  noteTargetStatus: document.getElementById("noteTargetStatus"),
   recalculateNoteBtn: document.getElementById("recalculateNoteBtn"),
   saveNoteDraftBtn: document.getElementById("saveNoteDraftBtn"),
   finalizeNoteBtn: document.getElementById("finalizeNoteBtn"),
@@ -136,7 +143,11 @@ const ui = {
   noteMissingPrompts: document.getElementById("noteMissingPrompts"),
   noteVersionList: document.getElementById("noteVersionList"),
   noteFinalCodesInput: document.getElementById("noteFinalCodesInput"),
+  noteFinalIcdInput: document.getElementById("noteFinalIcdInput"),
   overrideReasonInput: document.getElementById("overrideReasonInput"),
+  refreshNoteQueueBtn: document.getElementById("refreshNoteQueueBtn"),
+  noteQueueSummary: document.getElementById("noteQueueSummary"),
+  noteQueueBody: document.getElementById("noteQueueBody"),
   guidanceBadge: document.getElementById("guidanceBadge"),
   eventLog: document.getElementById("eventLog"),
   sessionBadge: document.getElementById("sessionBadge"),
@@ -511,6 +522,12 @@ const clearAuthState = () => {
   state.appointment = null;
   state.selectedPatientProfile = null;
   state.noteEditor.finalEditorTouched = false;
+  state.noteEditor.activeAppointmentId = "";
+  state.noteQueue.items = [];
+  if (state.noteQueue.pollTimer) {
+    clearInterval(state.noteQueue.pollTimer);
+    state.noteQueue.pollTimer = null;
+  }
   renderPatientHeader({ patientProfile: null, insurancePlan: ui.insurancePlan?.value || "" });
   writeAuthToken("");
 };
@@ -624,11 +641,11 @@ const parsePriority = (priority) => {
 const setConsentBadgeState = () => {
   if (!ui.consentBadge || !ui.consentGiven) return;
   if (ui.consentGiven.checked) {
-    ui.consentBadge.textContent = "Signed";
+    ui.consentBadge.textContent = "Captured";
     ui.consentBadge.classList.add("signed");
     return;
   }
-  ui.consentBadge.textContent = "Required";
+  ui.consentBadge.textContent = "Popup required";
   ui.consentBadge.classList.remove("signed");
 };
 
@@ -754,7 +771,7 @@ const openEvidenceDrawer = ({ title, subtitle = "", refs = [], evidenceKey = "" 
     ui.evidenceBody.innerHTML = transcript
       .map((segment) => {
         const isMatch = matchedIds.has(segment.id);
-        const sourceLabel = `${segment.source || "transcript"} • ${formatDateTime(segment.at)}`;
+        const sourceLabel = `${segment.source || "transcript"} â€¢ ${formatDateTime(segment.at)}`;
         const qualityPct = Math.round((Number(segment.quality?.confidence || 0) || 0) * 100);
         return `
           <div class="evidence-line${isMatch ? " is-match" : ""}" data-segment-id="${escapeHtml(
@@ -1015,6 +1032,70 @@ const buildProviderNoteText = (content = {}) => {
   return sectionText || manual;
 };
 
+const getActiveNoteAppointmentId = () =>
+  String(state.noteEditor.activeAppointmentId || state.appointment?.id || "").trim();
+
+const setActiveNoteEditorAppointment = (appointmentId) => {
+  const normalized = String(appointmentId || "").trim();
+  state.noteEditor.activeAppointmentId = normalized;
+  if (ui.noteTargetStatus) {
+    if (!normalized) {
+      ui.noteTargetStatus.textContent = "No appointment selected";
+      updateProviderEditorVisibility();
+      return;
+    }
+    const activeLiveId = String(state.appointment?.id || "").trim();
+    const context = state.encounterActive && normalized === activeLiveId ? "Live" : "Queued";
+    ui.noteTargetStatus.textContent = `${context} note target: ${normalized}`;
+  }
+  updateProviderEditorVisibility();
+};
+
+const parseFinalIcdInput = (value) =>
+  String(value || "")
+    .split(",")
+    .map((item) => String(item || "").trim())
+    .filter(Boolean)
+    .map((item) => {
+      const match = item.match(/^([A-TV-Z][0-9][0-9A-Z](?:\.[0-9A-Z]{1,4})?)\s*(?:[-:]\s*(.*))?$/i);
+      if (!match) {
+        return {
+          code: item.toUpperCase(),
+          description: "",
+        };
+      }
+      return {
+        code: String(match[1] || "").toUpperCase().trim(),
+        description: String(match[2] || "").trim(),
+      };
+    })
+    .filter((item) => item.code);
+
+const formatFinalIcdInput = (items = []) =>
+  (Array.isArray(items) ? items : [])
+    .map((item) => {
+      if (typeof item === "string") return String(item || "").trim().toUpperCase();
+      const code = String(item?.code || "").trim().toUpperCase();
+      const description = String(item?.description || "").trim();
+      if (!code) return "";
+      return description ? `${code} - ${description}` : code;
+    })
+    .filter(Boolean)
+    .join(", ");
+
+const updateProviderEditorVisibility = () => {
+  if (!ui.providerNoteEditorCard) return;
+  const targetId = getActiveNoteAppointmentId();
+  if (!targetId) {
+    ui.providerNoteEditorCard.classList.add("hidden");
+    return;
+  }
+  const activeLiveId = String(state.appointment?.id || "").trim();
+  const hideBecauseLiveSameEncounter =
+    state.encounterActive && activeLiveId && targetId === activeLiveId;
+  ui.providerNoteEditorCard.classList.toggle("hidden", hideBecauseLiveSameEncounter);
+};
+
 const syncProviderNoteIntoChartNotes = (noteText) => {
   const normalized = String(noteText || "").trim();
   const withoutProviderNote = Array.isArray(state.chartNotes)
@@ -1053,7 +1134,7 @@ const getNoteContentFromUi = () => {
       plan: String(existingSections.plan || "").trim(),
     },
     additionalProviderNotes: manualNotes,
-    freeTextAdditions: mergedNotes || manualNotes,
+    freeTextAdditions: mergedNotes,
   };
 };
 
@@ -1077,10 +1158,10 @@ const updateNoteMergeStatus = () => {
   const mergedNotes = String(ui.noteFinalMergedEditor?.value || "").trim();
   if (!manualNotes && !mergedNotes) {
     ui.noteMergeStatus.textContent =
-      "Add manual notes here. The merged final chart note stays editable below before finalization.";
+      "Manual notes save continuously. Open the Provider Note Editor after ending the appointment (or via queue) to finalize merged notes.";
     if (ui.noteFinalStatus) {
       ui.noteFinalStatus.textContent =
-        "After the appointment ends, edit this final section and click Finalize to publish to Billing + EHR.";
+        "Review final merged notes plus CPT/ICD codes, then click Finalize to queue EHR writing in the background.";
     }
     return;
   }
@@ -1089,13 +1170,14 @@ const updateNoteMergeStatus = () => {
   ui.noteMergeStatus.textContent = `Manual note captured (${manualLines} lines). Merged final note currently has ${mergedLines} lines and remains editable.`;
   if (ui.noteFinalStatus) {
     ui.noteFinalStatus.textContent =
-      "Merged final note is ready for review. Save any edits, then click Finalize to send Billing + EHR.";
+      "Merged final note is ready for review. Save edits, then click Finalize to send Billing immediately and EHR in background.";
   }
 };
 
 const setNoteLockState = (locked) => {
   if (ui.manualDoctorNotesInput) ui.manualDoctorNotesInput.disabled = Boolean(locked);
   if (ui.noteFinalMergedEditor) ui.noteFinalMergedEditor.disabled = Boolean(locked);
+  if (ui.noteFinalIcdInput) ui.noteFinalIcdInput.disabled = Boolean(locked);
   if (ui.saveNoteDraftBtn) ui.saveNoteDraftBtn.disabled = Boolean(locked);
   if (ui.recalculateNoteBtn) ui.recalculateNoteBtn.disabled = Boolean(locked);
   if (ui.finalizeNoteBtn) ui.finalizeNoteBtn.disabled = Boolean(locked);
@@ -1140,6 +1222,11 @@ const renderNoteCoding = (analysis) => {
     items: icdCodes,
     emptyText: "No ICD suggestions",
     keyPrefix: "note-icd",
+    labelBuilder: (item) => {
+      const code = String(item?.code || "").toUpperCase().trim();
+      const description = String(item?.description || "").trim();
+      return description ? `${code} - ${description}` : code || "ICD";
+    },
     subtitleBuilder: (item) => item.rationale || item.evidence || "Suggested diagnosis evidence",
   });
   renderSimplePills(
@@ -1157,6 +1244,7 @@ const renderNotePayload = (payload) => {
   state.noteEditor.note = note;
   if (!note) return;
 
+  setActiveNoteEditorAppointment(note.appointmentId || state.noteEditor.activeAppointmentId || "");
   setNoteContentToUi(note.version?.contentJson || {});
   renderNoteVersions(note.versions || []);
   renderNoteCoding(payload.codingAnalysis || null);
@@ -1169,11 +1257,23 @@ const renderNotePayload = (payload) => {
   }
 
   if (ui.noteAnalysisStatus) {
+    const deliveryStatus = String(note?.delivery?.ehrWriteStatus || "").trim().toLowerCase();
+    const deliveryText =
+      deliveryStatus === "queued"
+        ? "EHR queued"
+        : deliveryStatus === "writing"
+          ? "Writing to EHR"
+          : deliveryStatus === "written"
+            ? "EHR write complete"
+            : deliveryStatus === "failed"
+              ? `EHR write failed${note?.delivery?.ehrError ? `: ${note.delivery.ehrError}` : ""}`
+              : "";
     const model = payload?.codingAnalysis?.model;
     const confidence = Math.round(Number(payload?.codingAnalysis?.confidence || 0) * 100);
-    ui.noteAnalysisStatus.textContent = model
-      ? `Analysis ready (${model}) • ${confidence}%`
-      : `Analysis ready • ${confidence}%`;
+    const analysisText = model
+      ? `Analysis ready (${model}) | ${confidence}%`
+      : `Analysis ready | ${confidence}%`;
+    ui.noteAnalysisStatus.textContent = deliveryText ? `${analysisText} | ${deliveryText}` : analysisText;
   }
   const finalCodes =
     note?.version?.finalCodes ||
@@ -1182,13 +1282,25 @@ const renderNotePayload = (payload) => {
   if (ui.noteFinalCodesInput) {
     ui.noteFinalCodesInput.value = finalCodes.join(", ");
   }
+  const finalIcd =
+    note?.version?.finalIcdCodes ||
+    payload?.codingAnalysis?.icdCodes?.map((item) => ({
+      code: item?.code,
+      description: item?.description,
+    })) ||
+    [];
+  if (ui.noteFinalIcdInput) {
+    ui.noteFinalIcdInput.value = formatFinalIcdInput(finalIcd);
+  }
   if (ui.overrideReasonInput) {
     ui.overrideReasonInput.value = String(note?.version?.overrideReason || "");
   }
+  updateProviderEditorVisibility();
 };
 
 const loadAppointmentNote = async (appointmentId, { includeVersions = true } = {}) => {
   if (!appointmentId) return;
+  setActiveNoteEditorAppointment(appointmentId);
   const payload = await api(
     `/api/appointments/${encodeURIComponent(appointmentId)}/note?includeVersions=${includeVersions ? "true" : "false"}`
   );
@@ -1197,10 +1309,11 @@ const loadAppointmentNote = async (appointmentId, { includeVersions = true } = {
 };
 
 const saveNoteDraft = async ({ silent = false, allowAfterFinal = false } = {}) => {
-  if (!state.appointment?.id) return null;
+  const noteAppointmentId = getActiveNoteAppointmentId();
+  if (!noteAppointmentId) return null;
   if (ui.noteAnalysisStatus) ui.noteAnalysisStatus.textContent = "Saving draft + updating coding...";
 
-  const payload = await api(`/api/appointments/${encodeURIComponent(state.appointment.id)}/note`, {
+  const payload = await api(`/api/appointments/${encodeURIComponent(noteAppointmentId)}/note`, {
     method: "PUT",
     body: JSON.stringify({
       content: getNoteContentFromUi(),
@@ -1208,15 +1321,17 @@ const saveNoteDraft = async ({ silent = false, allowAfterFinal = false } = {}) =
     }),
   });
   renderNotePayload(payload || {});
+  loadNoteQueue({ silent: true }).catch(() => {});
   if (!silent) addLog("Provider note draft saved.", "good");
   return payload;
 };
 
 const recalculateNoteDraft = async () => {
-  if (!state.appointment?.id) return;
+  const noteAppointmentId = getActiveNoteAppointmentId();
+  if (!noteAppointmentId) return;
   if (ui.noteAnalysisStatus) ui.noteAnalysisStatus.textContent = "Recalculating...";
   const payload = await api(
-    `/api/appointments/${encodeURIComponent(state.appointment.id)}/note/recalculate`,
+    `/api/appointments/${encodeURIComponent(noteAppointmentId)}/note/recalculate`,
     {
       method: "POST",
       body: JSON.stringify({
@@ -1230,7 +1345,8 @@ const recalculateNoteDraft = async () => {
 };
 
 const finalizeCurrentNote = async () => {
-  if (!state.appointment?.id) return;
+  const noteAppointmentId = getActiveNoteAppointmentId();
+  if (!noteAppointmentId) return;
   const overriddenCodes = String(ui.noteFinalCodesInput?.value || "")
     .split(",")
     .map((item) => item.trim().toUpperCase())
@@ -1244,6 +1360,15 @@ const finalizeCurrentNote = async () => {
     ? state.noteEditor.codingAnalysis.cptCodes.map((item) => String(item.code || "").toUpperCase()).filter(Boolean)
     : [];
   const overrideReason = String(ui.overrideReasonInput?.value || "").trim();
+  const overriddenIcd = parseFinalIcdInput(ui.noteFinalIcdInput?.value || "");
+  const finalIcdCodes = overriddenIcd.length
+    ? overriddenIcd
+    : Array.isArray(state.noteEditor.codingAnalysis?.icdCodes)
+      ? state.noteEditor.codingAnalysis.icdCodes.map((item) => ({
+          code: String(item?.code || "").toUpperCase(),
+          description: String(item?.description || "").trim(),
+        }))
+      : [];
   const overrides = [];
   for (const code of finalCodes) {
     if (!suggestedCodes.includes(code)) {
@@ -1255,20 +1380,23 @@ const finalizeCurrentNote = async () => {
     }
   }
 
-  const payload = await api(`/api/appointments/${encodeURIComponent(state.appointment.id)}/note/finalize`, {
+  const payload = await api(`/api/appointments/${encodeURIComponent(noteAppointmentId)}/note/finalize`, {
     method: "POST",
     body: JSON.stringify({
       overrideReason,
       finalCodes,
+      finalIcdCodes,
       overrides,
     }),
   });
   renderNotePayload(payload || {});
-  addLog("Note finalized and locked for billing.", "good");
+  loadNoteQueue().catch(() => {});
+  addLog("Note finalized. EHR delivery now continues in the background.", "good");
 };
 
 const scheduleNoteAutosave = () => {
-  if (!state.appointment?.id) return;
+  const noteAppointmentId = getActiveNoteAppointmentId();
+  if (!noteAppointmentId) return;
   if (state.noteEditor.note?.locked) return;
   clearTimeout(state.noteEditor.autosaveTimer);
   if (ui.noteAnalysisStatus) ui.noteAnalysisStatus.textContent = "Draft changes pending...";
@@ -1702,7 +1830,7 @@ const renderAuditItems = (container, events, fallbackText) => {
   }
   container.innerHTML = events
     .map((event) => {
-      const meta = `${event.at || ""} • ${event.eventType || "event"}`;
+      const meta = `${event.at || ""} â€¢ ${event.eventType || "event"}`;
       const body = JSON.stringify(event.payload || {}, null, 2);
       return `
         <div class="audit-item">
@@ -1761,6 +1889,166 @@ const loadPastEncounters = async () => {
   state.loadedViewData.past = true;
 };
 
+const formatQueuePatient = (item = {}) => {
+  const profile = normalizePatientProfile(item?.patientProfile || {}, item?.patientRef || "");
+  const first = String(profile.firstName || "").trim();
+  const last = String(profile.lastName || "").trim();
+  const full = [first, last].filter(Boolean).join(" ").trim();
+  return full || profile.fullName || item?.patientRef || "-";
+};
+
+const getQueueStatusMeta = (item = {}) => {
+  const appointmentId = String(item?.id || "").trim();
+  const isLive = state.encounterActive && appointmentId && appointmentId === String(state.appointment?.id || "").trim();
+  if (isLive) {
+    return {
+      noteClass: "live",
+      noteLabel: "Live appointment",
+      ehrClass: "ready",
+      ehrLabel: "Pending finalization",
+    };
+  }
+
+  const noteStatus = String(item?.noteStatus || "draft").trim().toLowerCase();
+  const deliveryStatus = String(item?.noteDeliveryStatus || "idle").trim().toLowerCase();
+
+  const noteClass =
+    noteStatus === "finalized"
+      ? "done"
+      : Number(item?.transcriptCount || 0) > 0 || Number(item?.suggestionCount || 0) > 0
+        ? "ready"
+        : "ready";
+  const noteLabel =
+    noteStatus === "finalized"
+      ? "Finalized"
+      : Number(item?.transcriptCount || 0) > 0
+        ? "Ready to finalize"
+        : "Draft";
+
+  const ehrClass =
+    deliveryStatus === "written"
+      ? "done"
+      : deliveryStatus === "queued" || deliveryStatus === "writing"
+        ? "writing"
+        : deliveryStatus === "failed"
+          ? "error"
+          : "ready";
+  const ehrLabel =
+    deliveryStatus === "written"
+      ? "Written"
+      : deliveryStatus === "queued"
+        ? "Queued"
+        : deliveryStatus === "writing"
+          ? "Writing"
+          : deliveryStatus === "failed"
+            ? "Failed"
+            : noteStatus === "finalized"
+              ? "Awaiting write"
+              : "Pending finalization";
+
+  return { noteClass, noteLabel, ehrClass, ehrLabel };
+};
+
+const renderNoteQueue = (appointments = []) => {
+  const rows = Array.isArray(appointments) ? appointments : [];
+  state.noteQueue.items = rows;
+  if (!ui.noteQueueBody) return;
+
+  const actionable = rows
+    .filter((item) => {
+      const noteStatus = String(item?.noteStatus || "").trim().toLowerCase();
+      const deliveryStatus = String(item?.noteDeliveryStatus || "").trim().toLowerCase();
+      if (state.encounterActive && String(item?.id || "").trim() === String(state.appointment?.id || "").trim()) {
+        return true;
+      }
+      if (noteStatus !== "finalized") return true;
+      return ["queued", "writing", "failed"].includes(deliveryStatus);
+    })
+    .slice(0, 20);
+
+  if (!actionable.length) {
+    ui.noteQueueBody.innerHTML = '<tr><td colspan="5" class="tiny-note">No queued appointments yet.</td></tr>';
+    if (ui.noteQueueSummary) ui.noteQueueSummary.textContent = "No queued appointments";
+    return;
+  }
+
+  ui.noteQueueBody.innerHTML = actionable
+    .map((item) => {
+      const meta = getQueueStatusMeta(item);
+      const id = String(item?.id || "").trim();
+      const isLive = state.encounterActive && id && id === String(state.appointment?.id || "").trim();
+      const errorText = String(item?.noteDeliveryError || "").trim();
+      return `
+        <tr>
+          <td>
+            <div class="table-code-pill">${escapeHtml(id)}</div>
+            <div class="tiny-note">${escapeHtml(formatDateTime(item?.createdAt || ""))}</div>
+          </td>
+          <td>
+            <div>${escapeHtml(formatQueuePatient(item))}</div>
+            <div class="tiny-note">${escapeHtml(item?.patientRef || "-")}</div>
+          </td>
+          <td><span class="queue-status ${meta.noteClass}">${escapeHtml(meta.noteLabel)}</span></td>
+          <td>
+            <span class="queue-status ${meta.ehrClass}" title="${escapeHtml(errorText)}">${escapeHtml(
+              meta.ehrLabel
+            )}</span>
+          </td>
+          <td>
+            <button class="btn btn-ghost" type="button" style="height:30px;padding:0 10px;" data-note-open="${escapeHtml(
+              id
+            )}" ${isLive ? "disabled" : ""}>
+              ${isLive ? "Live" : "Open notes"}
+            </button>
+          </td>
+        </tr>
+      `;
+    })
+    .join("");
+
+  if (ui.noteQueueSummary) {
+    ui.noteQueueSummary.textContent = `${actionable.length} queued appointment${
+      actionable.length === 1 ? "" : "s"
+    }`;
+  }
+
+  ui.noteQueueBody.querySelectorAll("button[data-note-open]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const appointmentId = String(button.getAttribute("data-note-open") || "").trim();
+      if (!appointmentId) return;
+      loadAppointmentNote(appointmentId, { includeVersions: true })
+        .then(() => {
+          ui.providerNoteEditorCard?.scrollIntoView({ behavior: "smooth", block: "start" });
+        })
+        .catch((error) => addLog(`Unable to open note ${appointmentId}: ${error.message}`, "warn"));
+    });
+  });
+};
+
+const loadNoteQueue = async ({ silent = false } = {}) => {
+  if (!["provider", "admin"].includes(state.auth.user?.role || "")) return;
+  const payload = await api("/api/appointments");
+  const appointments = Array.isArray(payload?.appointments) ? payload.appointments : [];
+  renderNoteQueue(appointments);
+  if (!silent) {
+    addLog(`Queue refreshed (${appointments.length} appointments).`, "info");
+  }
+};
+
+const stopNoteQueuePolling = () => {
+  if (!state.noteQueue.pollTimer) return;
+  clearInterval(state.noteQueue.pollTimer);
+  state.noteQueue.pollTimer = null;
+};
+
+const startNoteQueuePolling = () => {
+  stopNoteQueuePolling();
+  if (!["provider", "admin"].includes(state.auth.user?.role || "")) return;
+  state.noteQueue.pollTimer = setInterval(() => {
+    loadNoteQueue({ silent: true }).catch(() => {});
+  }, 7000);
+};
+
 const renderPatientChartOptions = (patients = []) => {
   if (!ui.patientChartOptions) return;
   ui.patientChartOptions.innerHTML = Array.isArray(patients)
@@ -1817,6 +2105,22 @@ const loadPatientProfileByRef = async (patientRef, { silent = false } = {}) => {
     }
     return patient;
   } catch (error) {
+    const searchMatches = await lookupPatientCharts({ query: normalizedRef, silent: true }).catch(() => []);
+    const matched = pickPatientMatchFromSearch(searchMatches, normalizedRef);
+    if (matched) {
+      setSelectedPatientProfile(
+        {
+          ...matched,
+          insuranceInfo: toInsuranceLabel(ui.insurancePlan?.value || ""),
+        },
+        { insurancePlan: ui.insurancePlan?.value || "" }
+      );
+      if (!silent) {
+        addLog(`Matched patient from charts: ${matched.patientRef || normalizedRef}.`, "info");
+      }
+      return matched;
+    }
+
     setSelectedPatientProfile(
       {
         patientRef: normalizedRef,
@@ -1857,6 +2161,70 @@ const lookupPatientCharts = async ({ query = "", silent = false } = {}) => {
     addLog(`Loaded ${patients.length} patient chart match${patients.length === 1 ? "" : "es"}.`, "info");
   }
   return patients;
+};
+
+const pickPatientMatchFromSearch = (patients = [], query = "") => {
+  const normalizedQuery = String(query || "").trim().toLowerCase();
+  if (!normalizedQuery) return null;
+  const rows = Array.isArray(patients) ? patients : [];
+  if (!rows.length) return null;
+
+  const exactRef = rows.find((item) => {
+    const ref = String(item?.patientRef || "").trim().toLowerCase();
+    const chartId = String(item?.externalChartId || "").trim().toLowerCase();
+    return ref === normalizedQuery || chartId === normalizedQuery;
+  });
+  if (exactRef) return exactRef;
+
+  const exactName = rows.find(
+    (item) => String(item?.fullName || "").trim().toLowerCase() === normalizedQuery
+  );
+  if (exactName) return exactName;
+
+  const tokens = normalizedQuery.split(/\s+/).filter(Boolean);
+  const dobToken = tokens.find((token) => /^\d{4}-\d{2}-\d{2}$/.test(token)) || "";
+  const nameTokens = tokens.filter((token) => token !== dobToken);
+  if (dobToken && nameTokens.length) {
+    const byNameDob = rows.find((item) => {
+      const fullName = String(item?.fullName || "").trim().toLowerCase();
+      const dob = String(item?.dob || "").trim();
+      return dob === dobToken && nameTokens.every((token) => fullName.includes(token));
+    });
+    if (byNameDob) return byNameDob;
+  }
+
+  return rows.length === 1 ? rows[0] : null;
+};
+
+const resolvePatientReferenceForEncounter = async (query) => {
+  const raw = String(query || "").trim();
+  if (!raw) return "anonymous";
+
+  const byRef = await loadPatientProfileByRef(raw, { silent: true }).catch(() => null);
+  if (byRef?.patientRef) {
+    const resolvedRef = String(byRef.patientRef || "").trim().toUpperCase();
+    if (resolvedRef) {
+      if (ui.patientRef) ui.patientRef.value = resolvedRef;
+      return resolvedRef;
+    }
+  }
+
+  const matches = await lookupPatientCharts({ query: raw, silent: true }).catch(() => []);
+  const matched = pickPatientMatchFromSearch(matches, raw);
+  if (matched?.patientRef) {
+    const resolvedRef = String(matched.patientRef || "").trim().toUpperCase();
+    if (ui.patientRef) ui.patientRef.value = resolvedRef;
+    setSelectedPatientProfile(
+      {
+        ...matched,
+        insuranceInfo: toInsuranceLabel(ui.insurancePlan?.value || ""),
+      },
+      { insurancePlan: ui.insurancePlan?.value || "" }
+    );
+    return resolvedRef || "anonymous";
+  }
+
+  return raw.toUpperCase();
 };
 
 const renderRevenueReport = (report) => {
@@ -2293,7 +2661,7 @@ const renderHipaaSettings = (payload) => {
 
   renderSimplePills(
     ui.hipaaBaaDocsList,
-    (hipaa.baaDocuments || []).map((item) => `${item.name} • ${formatDateTime(item.uploadedAt)}`),
+    (hipaa.baaDocuments || []).map((item) => `${item.name} â€¢ ${formatDateTime(item.uploadedAt)}`),
     "No BAA documents yet"
   );
 
@@ -3116,34 +3484,48 @@ const resetEncounterPanels = () => {
   });
   renderNoteCoding(null);
   renderNoteVersions([]);
+  updateProviderEditorVisibility();
 };
+
+const buildConsentFormId = () => {
+  const stamp = new Date().toISOString().slice(0, 10).replaceAll("-", "");
+  const random = Math.floor(Math.random() * 9000 + 1000);
+  return `CONSENT-${stamp}-${random}`;
+};
+
+const requestEncounterConsent = () =>
+  window.confirm(
+    "Confirm patient verbal consent for AI transcription and audio recording before starting this appointment."
+  );
 
 const startEncounter = async () => {
   if (!["provider", "admin"].includes(state.auth.user?.role || "")) {
     addLog("Only provider/admin users can start encounters.", "warn");
     return;
   }
-  if (!ui.consentGiven.checked) {
-    alert("Intake consent form must be signed before recording.");
+
+  const consentAccepted = requestEncounterConsent();
+  if (!consentAccepted) {
+    addLog("Start canceled: patient consent not confirmed.", "warn");
     return;
   }
+  if (ui.consentGiven) ui.consentGiven.checked = true;
+  setConsentBadgeState();
 
   const doctorRef = String(state.auth.user?.username || "").trim();
-  const patientRef = ui.patientRef.value.trim() || "anonymous";
-  const consentFormId = ui.consentFormId.value.trim();
+  const patientRef = await resolvePatientReferenceForEncounter(ui.patientRef?.value || "");
+  const consentFormId = buildConsentFormId();
   const encounterMode = String(ui.encounterMode?.value || "in-person").trim().toLowerCase();
   const telehealthPlatform =
     encounterMode === "telehealth"
       ? String(ui.telehealthPlatform?.value || "generic").trim().toLowerCase()
       : "";
+  if (ui.consentFormId) {
+    ui.consentFormId.value = consentFormId;
+  }
 
   if (!doctorRef) {
     alert("Doctor reference is required.");
-    return;
-  }
-
-  if (!consentFormId) {
-    alert("Consent Form ID is required.");
     return;
   }
 
@@ -3154,7 +3536,7 @@ const startEncounter = async () => {
       patientRef,
       consentFormId,
       consentSignedAt: new Date().toISOString(),
-      insurancePlan: ui.insurancePlan.value,
+      insurancePlan: String(ui.insurancePlan?.value || "medicare").trim().toLowerCase(),
       visitType: ui.visitType.value,
       encounterMode,
       telehealthPlatform,
@@ -3181,6 +3563,7 @@ const startEncounter = async () => {
   state.noteEditor.note = null;
   state.noteEditor.codingAnalysis = null;
   state.noteEditor.finalEditorTouched = false;
+  setActiveNoteEditorAppointment(state.appointment.id);
   clearInterimTranscript();
 
   resetEncounterPanels();
@@ -3208,6 +3591,7 @@ const startEncounter = async () => {
   loadAppointmentNote(state.appointment.id).catch((error) =>
     addLog(`Unable to load note draft: ${error.message}`, "warn")
   );
+  loadNoteQueue({ silent: true }).catch(() => {});
 
   state.micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
   const azureStarted = await startAzureSpeech();
@@ -3224,6 +3608,7 @@ const startEncounter = async () => {
 const stopEncounter = async () => {
   ui.stopBtn.disabled = true;
   state.encounterActive = false;
+  setActiveNoteEditorAppointment(state.appointment?.id || state.noteEditor.activeAppointmentId || "");
   clearInterimTranscript();
   closeSuggestionStream();
 
@@ -3261,7 +3646,11 @@ const stopEncounter = async () => {
     text: ui.sessionBadge ? "Session Idle" : "Session Ended",
   });
   ui.startBtn.disabled = false;
-  addLog("Encounter ended.");
+  if (ui.consentGiven) ui.consentGiven.checked = false;
+  setConsentBadgeState();
+  updateProviderEditorVisibility();
+  loadNoteQueue({ silent: true }).catch(() => {});
+  addLog("Appointment ended.");
 
   if (state.appointment?.id) {
     loadAppointmentNote(state.appointment.id, { includeVersions: true }).catch((error) =>
@@ -3305,6 +3694,9 @@ const bindNavigation = () => {
   });
   ui.refreshBillingQueueBtn?.addEventListener("click", () => {
     loadBillingQueue().catch((error) => addLog(`Billing queue refresh failed: ${error.message}`, "warn"));
+  });
+  ui.refreshNoteQueueBtn?.addEventListener("click", () => {
+    loadNoteQueue().catch((error) => addLog(`Notes queue refresh failed: ${error.message}`, "warn"));
   });
   ui.applyReportFiltersBtn?.addEventListener("click", () => {
     loadRevenueReport().catch((error) => addLog(`Revenue report filter failed: ${error.message}`, "warn"));
@@ -3452,6 +3844,8 @@ const completeAuthSession = (payload = {}) => {
   applyRoleViewAccess();
   resetLoadedViews();
   initializeViews();
+  startNoteQueuePolling();
+  loadNoteQueue({ silent: true }).catch(() => {});
   setAuthError("");
 };
 
@@ -3589,6 +3983,8 @@ const loadSessionUser = async () => {
     setAuthUserUi();
     applyUserContextToEncounterForm();
     applyRoleViewAccess();
+    startNoteQueuePolling();
+    loadNoteQueue({ silent: true }).catch(() => {});
     return Boolean(state.auth.user);
   } catch {
     clearAuthState();
@@ -3664,7 +4060,7 @@ const bindNoteEditor = () => {
       scheduleNoteAutosave();
     });
     input.addEventListener("blur", () => {
-      if (!state.appointment?.id) return;
+      if (!getActiveNoteAppointmentId()) return;
       saveNoteDraft({ silent: true }).catch((error) =>
         addLog(`Auto-save failed: ${error.message}`, "warn")
       );

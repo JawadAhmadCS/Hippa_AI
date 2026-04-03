@@ -135,6 +135,13 @@ const hydrateAppointmentRecord = (raw = {}) => {
       currentAnalysis: workflow?.currentAnalysis || null,
       overrideRecords: ensureArray(workflow?.overrideRecords),
       delivery: {
+        ehrWriteStatus: String(
+          workflow?.delivery?.ehrWriteStatus ||
+            (workflow?.delivery?.ehrSentAt ? "written" : "idle")
+        ).trim().toLowerCase(),
+        ehrQueuedAt: workflow?.delivery?.ehrQueuedAt || null,
+        ehrLastAttemptAt: workflow?.delivery?.ehrLastAttemptAt || null,
+        ehrError: String(workflow?.delivery?.ehrError || "").trim(),
         ehrSentAt: workflow?.delivery?.ehrSentAt || null,
         billingSentAt: workflow?.delivery?.billingSentAt || null,
         billingAccessExpiresAt: workflow?.delivery?.billingAccessExpiresAt || null,
@@ -439,6 +446,11 @@ const buildAppointmentSummary = (appointment) => {
     finalCptCodes,
     noteStatus: appointment.noteWorkflow?.status || "draft",
     finalizedAt: appointment.noteWorkflow?.finalizedAt || null,
+    noteDeliveryStatus: String(appointment.noteWorkflow?.delivery?.ehrWriteStatus || "idle")
+      .trim()
+      .toLowerCase(),
+    noteDeliveryError: String(appointment.noteWorkflow?.delivery?.ehrError || "").trim(),
+    ehrSentAt: appointment.noteWorkflow?.delivery?.ehrSentAt || null,
     missedOpportunityCount: Array.isArray(appointment.liveInsights?.missedBillables)
       ? appointment.liveInsights.missedBillables.length
       : 0,
@@ -525,10 +537,16 @@ export const createAppointment = ({
       currentAnalysis: null,
       overrideRecords: [],
       delivery: {
+        ehrWriteStatus: "idle",
+        ehrQueuedAt: null,
+        ehrLastAttemptAt: null,
+        ehrError: "",
         ehrSentAt: null,
         billingSentAt: null,
         billingAccessExpiresAt: null,
         billingRetentionDays: BILLING_ACCESS_RETENTION_DAYS,
+        ehrDestination: "",
+        ehrExternalRecordId: "",
       },
     },
   };
@@ -784,6 +802,7 @@ export const finalizeCurrentNote = ({
   actorRole = "provider",
   overrideReason = "",
   finalCodes = null,
+  finalIcdCodes = null,
 }) => {
   const appointment = getAppointment(appointmentId);
   if (!appointment) return null;
@@ -800,6 +819,28 @@ export const finalizeCurrentNote = ({
   const normalizedFinalCodes = Array.isArray(finalCodes)
     ? finalCodes.map((item) => String(item || "").trim().toUpperCase()).filter(Boolean)
     : fallbackCodes.filter(Boolean);
+  const fallbackIcd = Array.isArray(workflow.currentAnalysis?.icdCodes)
+    ? workflow.currentAnalysis.icdCodes.map((item) => ({
+        code: String(item?.code || "").trim().toUpperCase(),
+        description: String(item?.description || "").trim(),
+      }))
+    : [];
+  const normalizedFinalIcdCodes = (
+    Array.isArray(finalIcdCodes) && finalIcdCodes.length ? finalIcdCodes : fallbackIcd
+  )
+    .map((item) => {
+      if (typeof item === "string") {
+        return {
+          code: String(item || "").trim().toUpperCase(),
+          description: "",
+        };
+      }
+      return {
+        code: String(item?.code || "").trim().toUpperCase(),
+        description: String(item?.description || "").trim(),
+      };
+    })
+    .filter((item) => item.code);
 
   const finalizedVersion = {
     ...current,
@@ -809,6 +850,7 @@ export const finalizeCurrentNote = ({
     finalizedRole: actorRole,
     finalizedAt: nowIso(),
     finalCodes: normalizedFinalCodes,
+    finalIcdCodes: normalizedFinalIcdCodes,
     overrideReason: normalizeNoteValue(overrideReason),
   };
 
@@ -825,10 +867,17 @@ export const finalizeCurrentNote = ({
   workflow.status = "finalized";
   workflow.locked = true;
   const billingAccessExpiresAt = computeBillingAccessExpiresAt(finalizedVersion.finalizedAt);
+  const queuedAt = nowIso();
   workflow.delivery = {
     ...(workflow.delivery || {}),
-    ehrSentAt: nowIso(),
-    billingSentAt: nowIso(),
+    ehrWriteStatus: "queued",
+    ehrQueuedAt: queuedAt,
+    ehrLastAttemptAt: null,
+    ehrError: "",
+    ehrSentAt: null,
+    ehrDestination: "",
+    ehrExternalRecordId: "",
+    billingSentAt: queuedAt,
     billingAccessExpiresAt,
     billingRetentionDays: BILLING_ACCESS_RETENTION_DAYS,
   };
@@ -870,6 +919,23 @@ export const getFinalizedNotePacket = (appointmentId) => {
   const analysisIcdCodes = Array.isArray(analysisSnapshot?.icdCodes)
     ? analysisSnapshot.icdCodes
     : [];
+  const approvedIcdCodes = (
+    finalVersion.finalIcdCodes ||
+    analysisIcdCodes.map((item) => ({
+      code: item?.code,
+      description: item?.description,
+    })) ||
+    []
+  )
+    .map((item) =>
+      typeof item === "string"
+        ? { code: String(item || "").trim().toUpperCase(), description: "" }
+        : {
+            code: String(item?.code || "").trim().toUpperCase(),
+            description: String(item?.description || "").trim(),
+          }
+    )
+    .filter((item) => item.code);
   const billableCodes = Array.isArray(appointment.revenueTracker?.billableCodes)
     ? appointment.revenueTracker.billableCodes
     : [];
@@ -945,8 +1011,10 @@ export const getFinalizedNotePacket = (appointmentId) => {
     approvedCodes,
     recommendedCptCodes: analysisCodes,
     recommendedIcd10Codes: analysisIcdCodes,
+    approvedIcdCodes,
     codeEvidence,
     codingAnalysis: analysisSnapshot,
+    delivery: workflow.delivery || {},
     transcriptSegments: Array.isArray(appointment.transcriptSegments)
       ? appointment.transcriptSegments.map((segment) => ({
           id: segment.id,
@@ -995,4 +1063,48 @@ export const addOverrideRecord = ({
   appointment.noteWorkflow.overrideRecords = [record, ...existing].slice(0, 300);
   persistAppointments();
   return record;
+};
+
+export const updateEhrDeliveryStatus = ({
+  appointmentId,
+  status = "queued",
+  destination = "",
+  externalRecordId = "",
+  error = "",
+} = {}) => {
+  const appointment = getAppointment(appointmentId);
+  if (!appointment) return null;
+  const workflow = appointment.noteWorkflow || {};
+  const delivery = workflow.delivery || {};
+  const normalizedStatus = String(status || "queued")
+    .trim()
+    .toLowerCase();
+  const at = nowIso();
+
+  const next = {
+    ...delivery,
+    ehrWriteStatus: normalizedStatus,
+    ehrLastAttemptAt: at,
+  };
+
+  if (normalizedStatus === "queued") {
+    next.ehrQueuedAt = at;
+    next.ehrSentAt = null;
+    next.ehrError = "";
+  } else if (normalizedStatus === "writing") {
+    if (!next.ehrQueuedAt) next.ehrQueuedAt = at;
+    next.ehrError = "";
+  } else if (normalizedStatus === "written") {
+    next.ehrSentAt = at;
+    next.ehrDestination = String(destination || "").trim();
+    next.ehrExternalRecordId = String(externalRecordId || "").trim();
+    next.ehrError = "";
+  } else if (normalizedStatus === "failed") {
+    next.ehrError = String(error || "EHR write failed.").trim();
+    next.ehrSentAt = null;
+  }
+
+  workflow.delivery = next;
+  persistAppointments();
+  return workflow.delivery;
 };

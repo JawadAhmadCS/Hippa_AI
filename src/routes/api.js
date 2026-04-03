@@ -14,12 +14,12 @@ import {
   getCurrentNoteVersion,
   getFinalizedNotePacket,
   getAppointment,
-  persistAppointmentStore,
   listAppointmentRecords,
   listNoteVersions,
   listAppointments,
   setCurrentNoteAnalysis,
   setRevenueTracker,
+  updateEhrDeliveryStatus,
   upsertDraftNoteVersion,
 } from "../services/appointment-store.js";
 import { listAuditEvents, writeAuditEvent } from "../services/audit-service.js";
@@ -102,6 +102,97 @@ const withAsync = (handler) => async (request, response) => {
 
 const fireAndForgetAudit = (eventType, payload) => {
   writeAuditEvent(eventType, payload).catch(() => {});
+};
+
+const pendingEhrWrites = new Map();
+
+const broadcastDeliveryUpdate = (appointment, delivery, statusText = "") => {
+  if (!appointment?.id) return;
+  broadcastAppointmentEvent(appointment.id, "note.delivery.update", {
+    appointmentId: appointment.id,
+    noteId: appointment.noteWorkflow?.noteId,
+    delivery: delivery || {},
+    status: statusText || String(delivery?.ehrWriteStatus || "unknown"),
+    at: new Date().toISOString(),
+  });
+};
+
+const queueFinalizedNoteEhrWrite = ({ appointmentId, actorId = "", actorRole = "" } = {}) => {
+  const normalizedAppointmentId = String(appointmentId || "").trim();
+  if (!normalizedAppointmentId) return;
+  if (pendingEhrWrites.has(normalizedAppointmentId)) return;
+
+  const task = (async () => {
+    try {
+      const appointment = getAppointment(normalizedAppointmentId);
+      if (!appointment) return;
+
+      const writingDelivery = updateEhrDeliveryStatus({
+        appointmentId: normalizedAppointmentId,
+        status: "writing",
+      });
+      broadcastDeliveryUpdate(appointment, writingDelivery, "writing");
+
+      const finalizedPacket = getFinalizedNotePacket(normalizedAppointmentId);
+      if (!finalizedPacket) {
+        const failedDelivery = updateEhrDeliveryStatus({
+          appointmentId: normalizedAppointmentId,
+          status: "failed",
+          error: "No finalized note packet available for EHR write.",
+        });
+        broadcastDeliveryUpdate(appointment, failedDelivery, "failed");
+        return;
+      }
+
+      const ehrWrite = await writeFinalizedNoteToEhr({
+        appointmentId: normalizedAppointmentId,
+        clientId: appointment.clientId,
+        doctorRef: appointment.doctorRef,
+        patientRef: appointment.patientRef,
+        patientChartId: appointment.patientChartId,
+        finalVersion: finalizedPacket.finalVersion,
+        codingAnalysis: finalizedPacket.codingAnalysis,
+      });
+
+      const delivered = updateEhrDeliveryStatus({
+        appointmentId: normalizedAppointmentId,
+        status: "written",
+        destination: ehrWrite?.destination,
+        externalRecordId: ehrWrite?.externalRecordId,
+      });
+      broadcastDeliveryUpdate(appointment, delivered, "written");
+
+      fireAndForgetAudit("note.ehr.write.success", {
+        appointmentId: normalizedAppointmentId,
+        noteId: appointment.noteWorkflow?.noteId,
+        actorId,
+        actorRole,
+        destination: ehrWrite?.destination || "",
+        externalRecordId: ehrWrite?.externalRecordId || "",
+        writtenAt: ehrWrite?.writtenAt || new Date().toISOString(),
+      });
+    } catch (error) {
+      const appointment = getAppointment(normalizedAppointmentId);
+      const failedDelivery = updateEhrDeliveryStatus({
+        appointmentId: normalizedAppointmentId,
+        status: "failed",
+        error: error?.message || "EHR write failed.",
+      });
+      if (appointment) {
+        broadcastDeliveryUpdate(appointment, failedDelivery, "failed");
+      }
+      fireAndForgetAudit("note.ehr.write.failed", {
+        appointmentId: normalizedAppointmentId,
+        actorId,
+        actorRole,
+        error: String(error?.message || "unknown"),
+      });
+    } finally {
+      pendingEhrWrites.delete(normalizedAppointmentId);
+    }
+  })();
+
+  pendingEhrWrites.set(normalizedAppointmentId, task);
 };
 
 const extractSessionToken = (request) => {
@@ -333,6 +424,7 @@ const buildNotePayload = ({ appointment, version, analysis, includeVersions = fa
   const workflow = appointment.noteWorkflow || {};
   return {
     note: {
+      appointmentId: appointment.id,
       noteId: workflow.noteId,
       status: workflow.status || "draft",
       locked: Boolean(workflow.locked),
@@ -929,6 +1021,22 @@ router.post(
     const finalCodes = Array.isArray(request.body.finalCodes)
       ? request.body.finalCodes.map((item) => String(item || "").trim().toUpperCase()).filter(Boolean)
       : null;
+    const finalIcdCodes = Array.isArray(request.body.finalIcdCodes)
+      ? request.body.finalIcdCodes
+          .map((item) => {
+            if (typeof item === "string") {
+              return {
+                code: String(item || "").trim().toUpperCase(),
+                description: "",
+              };
+            }
+            return {
+              code: String(item?.code || "").trim().toUpperCase(),
+              description: String(item?.description || "").trim(),
+            };
+          })
+          .filter((item) => item.code)
+      : null;
     const overrideReason = String(request.body.overrideReason || "").trim();
     const overrides = Array.isArray(request.body.overrides) ? request.body.overrides : [];
     for (const item of overrides) {
@@ -951,38 +1059,18 @@ router.post(
       actorRole: request.auth.role,
       overrideReason,
       finalCodes,
+      finalIcdCodes,
     });
     if (!result) {
       response.status(500).json({ error: "Unable to finalize note." });
       return;
     }
 
-    const finalizedPacket = getFinalizedNotePacket(appointment.id);
-    let ehrWrite = null;
-    if (finalizedPacket) {
-      ehrWrite = await writeFinalizedNoteToEhr({
-        appointmentId: appointment.id,
-        clientId: appointment.clientId,
-        doctorRef: appointment.doctorRef,
-        patientRef: appointment.patientRef,
-        patientChartId: appointment.patientChartId,
-        finalVersion: finalizedPacket.finalVersion,
-        codingAnalysis: finalizedPacket.codingAnalysis,
-      }).catch(() => null);
-    }
-    if (ehrWrite) {
-      appointment.noteWorkflow.delivery = {
-        ...(appointment.noteWorkflow?.delivery || {}),
-        ehrSentAt: ehrWrite.writtenAt,
-        ehrDestination: ehrWrite.destination,
-        ehrExternalRecordId: ehrWrite.externalRecordId,
-      };
-      result.delivery = {
-        ...(result.delivery || {}),
-        ...appointment.noteWorkflow.delivery,
-      };
-      persistAppointmentStore();
-    }
+    queueFinalizedNoteEhrWrite({
+      appointmentId: appointment.id,
+      actorId: request.auth.userId,
+      actorRole: request.auth.role,
+    });
 
     broadcastAppointmentEvent(appointment.id, "note.finalized", {
       appointmentId: appointment.id,
@@ -991,6 +1079,7 @@ router.post(
       versionId: result.version?.versionId,
       actorId: request.auth.userId,
       actorRole: request.auth.role,
+      delivery: result.delivery || appointment.noteWorkflow?.delivery || {},
     });
 
     fireAndForgetAudit("note.finalized", {
@@ -1000,10 +1089,10 @@ router.post(
       actorId: request.auth.userId,
       actorRole: request.auth.role,
       finalCodes: result.version?.finalCodes || [],
+      finalIcdCodes: result.version?.finalIcdCodes || [],
       overrideReason,
       overrideCount: overrides.length,
-      delivery: result.delivery,
-      ehrWrite,
+      delivery: result.delivery || appointment.noteWorkflow?.delivery || {},
     });
 
     response.json(
