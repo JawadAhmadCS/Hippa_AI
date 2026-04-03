@@ -97,9 +97,10 @@ const ui = {
   patientRef: document.getElementById("patientRef"),
   patientLookupBtn: document.getElementById("patientLookupBtn"),
   patientChartOptions: document.getElementById("patientChartOptions"),
-  patientHeaderFirstName: document.getElementById("patientHeaderFirstName"),
-  patientHeaderLastName: document.getElementById("patientHeaderLastName"),
-  patientHeaderDob: document.getElementById("patientHeaderDob"),
+  patientHeaderFirstNameInput: document.getElementById("patientHeaderFirstNameInput"),
+  patientHeaderLastNameInput: document.getElementById("patientHeaderLastNameInput"),
+  patientHeaderDobInput: document.getElementById("patientHeaderDobInput"),
+  patientHeaderIdInput: document.getElementById("patientHeaderIdInput"),
   patientHeaderInsurance: document.getElementById("patientHeaderInsurance"),
   consentFormId: document.getElementById("consentFormId"),
   insurancePlan: document.getElementById("insurancePlan"),
@@ -458,9 +459,22 @@ const renderPatientHeader = ({ patientProfile = null, insurancePlan = "" } = {})
   const insuranceLabel = normalized.insuranceInfo
     ? toInsuranceLabel(normalized.insuranceInfo)
     : toInsuranceLabel(insurancePlan);
-  setTextContent(ui.patientHeaderFirstName, normalized.firstName || "-");
-  setTextContent(ui.patientHeaderLastName, normalized.lastName || "-");
-  setTextContent(ui.patientHeaderDob, normalized.dob ? formatDateOnly(normalized.dob) : "-");
+  const patientId = String(normalized.patientRef || normalized.externalChartId || "").trim().toUpperCase();
+  if (ui.patientHeaderFirstNameInput) {
+    ui.patientHeaderFirstNameInput.value = normalized.firstName || "";
+  }
+  if (ui.patientHeaderLastNameInput) {
+    ui.patientHeaderLastNameInput.value = normalized.lastName || "";
+  }
+  if (ui.patientHeaderDobInput) {
+    ui.patientHeaderDobInput.value = normalized.dob || "";
+  }
+  if (ui.patientHeaderIdInput) {
+    ui.patientHeaderIdInput.value = patientId || "";
+  }
+  if (ui.patientRef) {
+    ui.patientRef.value = patientId || "";
+  }
   setTextContent(ui.patientHeaderInsurance, insuranceLabel || "-");
 };
 
@@ -2078,7 +2092,10 @@ const setSelectedPatientProfile = (profile = null, { insurancePlan = "" } = {}) 
   });
 };
 
-const loadPatientProfileByRef = async (patientRef, { silent = false } = {}) => {
+const loadPatientProfileByRef = async (
+  patientRef,
+  { silent = false, allowUnmatchedFallback = true } = {}
+) => {
   const normalizedRef = String(patientRef || "")
     .trim()
     .toUpperCase();
@@ -2121,13 +2138,15 @@ const loadPatientProfileByRef = async (patientRef, { silent = false } = {}) => {
       return matched;
     }
 
-    setSelectedPatientProfile(
-      {
-        patientRef: normalizedRef,
-        insuranceInfo: toInsuranceLabel(ui.insurancePlan?.value || ""),
-      },
-      { insurancePlan: ui.insurancePlan?.value || "" }
-    );
+    if (allowUnmatchedFallback) {
+      setSelectedPatientProfile(
+        {
+          patientRef: normalizedRef,
+          insuranceInfo: toInsuranceLabel(ui.insurancePlan?.value || ""),
+        },
+        { insurancePlan: ui.insurancePlan?.value || "" }
+      );
+    }
     if (!silent) {
       addLog(`Unable to load patient chart ${normalizedRef}: ${error.message}`, "warn");
     }
@@ -2196,35 +2215,112 @@ const pickPatientMatchFromSearch = (patients = [], query = "") => {
   return rows.length === 1 ? rows[0] : null;
 };
 
-const resolvePatientReferenceForEncounter = async (query) => {
-  const raw = String(query || "").trim();
-  if (!raw) return "anonymous";
+const normalizeLookupName = (value = "") =>
+  String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
 
-  const byRef = await loadPatientProfileByRef(raw, { silent: true }).catch(() => null);
-  if (byRef?.patientRef) {
-    const resolvedRef = String(byRef.patientRef || "").trim().toUpperCase();
-    if (resolvedRef) {
+const readPatientLookupDraft = () => {
+  const topBarPatientId = String(ui.patientHeaderIdInput?.value || "").trim().toUpperCase();
+  const setupPatientId = String(ui.patientRef?.value || "").trim().toUpperCase();
+  const patientId = topBarPatientId || setupPatientId;
+  return {
+    patientId,
+    firstName: String(ui.patientHeaderFirstNameInput?.value || "").trim(),
+    lastName: String(ui.patientHeaderLastNameInput?.value || "").trim(),
+    dob: String(ui.patientHeaderDobInput?.value || "").trim(),
+  };
+};
+
+const hasValidPatientLookupDraft = (draft = {}) =>
+  Boolean(
+    String(draft.patientId || "").trim() ||
+      (String(draft.firstName || "").trim() &&
+        String(draft.lastName || "").trim() &&
+        String(draft.dob || "").trim())
+  );
+
+const pickPatientByNameDob = (patients = [], draft = {}) => {
+  const rows = Array.isArray(patients) ? patients : [];
+  if (!rows.length) return null;
+  const expectedFirst = normalizeLookupName(draft.firstName);
+  const expectedLast = normalizeLookupName(draft.lastName);
+  const expectedDob = String(draft.dob || "").trim();
+  if (!expectedFirst || !expectedLast || !expectedDob) return null;
+
+  return (
+    rows.find((item) => {
+      const split = splitPatientName(
+        String(item?.fullName || [item?.firstName, item?.lastName].filter(Boolean).join(" "))
+      );
+      const itemFirst = normalizeLookupName(item?.firstName || split.firstName);
+      const itemLast = normalizeLookupName(item?.lastName || split.lastName);
+      const itemDob = String(item?.dob || "").trim();
+      return itemDob === expectedDob && itemFirst === expectedFirst && itemLast === expectedLast;
+    }) || null
+  );
+};
+
+const findPatientFromLookupDraft = async ({ silent = false } = {}) => {
+  const draft = readPatientLookupDraft();
+  if (!hasValidPatientLookupDraft(draft)) return null;
+
+  if (draft.patientId) {
+    if (ui.patientRef) ui.patientRef.value = draft.patientId;
+    if (ui.patientHeaderIdInput) ui.patientHeaderIdInput.value = draft.patientId;
+    const byRef = await loadPatientProfileByRef(draft.patientId, {
+      silent: true,
+      allowUnmatchedFallback: false,
+    }).catch(() => null);
+    if (byRef?.patientRef) return byRef;
+  }
+
+  if (draft.firstName && draft.lastName && draft.dob) {
+    const query = `${draft.firstName} ${draft.lastName} ${draft.dob}`.trim();
+    const matches = await lookupPatientCharts({ query, silent: true }).catch(() => []);
+    const matched = pickPatientByNameDob(matches, draft) || pickPatientMatchFromSearch(matches, query);
+    if (matched?.patientRef) {
+      const resolvedRef = String(matched.patientRef || "").trim().toUpperCase();
       if (ui.patientRef) ui.patientRef.value = resolvedRef;
-      return resolvedRef;
+      if (ui.patientHeaderIdInput) ui.patientHeaderIdInput.value = resolvedRef;
+      setSelectedPatientProfile(
+        {
+          ...matched,
+          insuranceInfo: toInsuranceLabel(ui.insurancePlan?.value || ""),
+        },
+        { insurancePlan: ui.insurancePlan?.value || "" }
+      );
+      if (!silent) {
+        addLog(`Matched patient from charts: ${resolvedRef}.`, "info");
+      }
+      return matched;
     }
   }
 
-  const matches = await lookupPatientCharts({ query: raw, silent: true }).catch(() => []);
-  const matched = pickPatientMatchFromSearch(matches, raw);
-  if (matched?.patientRef) {
-    const resolvedRef = String(matched.patientRef || "").trim().toUpperCase();
-    if (ui.patientRef) ui.patientRef.value = resolvedRef;
-    setSelectedPatientProfile(
-      {
-        ...matched,
-        insuranceInfo: toInsuranceLabel(ui.insurancePlan?.value || ""),
-      },
-      { insurancePlan: ui.insurancePlan?.value || "" }
+  return null;
+};
+
+const resolvePatientReferenceForEncounter = async () => {
+  const draft = readPatientLookupDraft();
+  if (!hasValidPatientLookupDraft(draft)) {
+    throw new Error(
+      "Enter Patient ID, or enter First Name + Last Name + DOB, then pull from charts."
     );
-    return resolvedRef || "anonymous";
   }
 
-  return raw.toUpperCase();
+  const matched = await findPatientFromLookupDraft({ silent: true });
+  if (!matched?.patientRef) {
+    throw new Error("No chart match found. Verify Patient ID or complete First Name + Last Name + DOB.");
+  }
+
+  const resolvedRef = String(matched.patientRef || "").trim().toUpperCase();
+  if (!resolvedRef) {
+    throw new Error("Matched patient is missing Patient ID.");
+  }
+  if (ui.patientRef) ui.patientRef.value = resolvedRef;
+  if (ui.patientHeaderIdInput) ui.patientHeaderIdInput.value = resolvedRef;
+  return resolvedRef;
 };
 
 const renderRevenueReport = (report) => {
@@ -3513,7 +3609,7 @@ const startEncounter = async () => {
   setConsentBadgeState();
 
   const doctorRef = String(state.auth.user?.username || "").trim();
-  const patientRef = await resolvePatientReferenceForEncounter(ui.patientRef?.value || "");
+  const patientRef = await resolvePatientReferenceForEncounter();
   const consentFormId = buildConsentFormId();
   const encounterMode = String(ui.encounterMode?.value || "in-person").trim().toLowerCase();
   const telehealthPlatform =
@@ -4127,36 +4223,96 @@ document.addEventListener("keydown", (event) => {
 ui.consentGiven?.addEventListener("change", setConsentBadgeState);
 ui.encounterMode?.addEventListener("change", syncEncounterModeUi);
 ui.patientLookupBtn?.addEventListener("click", () => {
-  lookupPatientCharts({ query: ui.patientRef?.value || "" })
-    .then(() => loadPatientProfileByRef(ui.patientRef?.value || ""))
+  const draft = readPatientLookupDraft();
+  if (!hasValidPatientLookupDraft(draft)) {
+    addLog("Enter Patient ID or First Name + Last Name + DOB before pulling charts.", "warn");
+    return;
+  }
+  findPatientFromLookupDraft()
+    .then((matched) => {
+      if (!matched?.patientRef) {
+        addLog("No patient chart match found. Verify Patient ID or complete First + Last + DOB.", "warn");
+      }
+    })
     .catch((error) => addLog(`Patient chart lookup failed: ${error.message}`, "warn"));
 });
 ui.patientRef?.addEventListener("input", () => {
-  const query = String(ui.patientRef.value || "").trim();
+  const query = String(ui.patientRef.value || "")
+    .trim()
+    .toUpperCase();
+  if (ui.patientHeaderIdInput) ui.patientHeaderIdInput.value = query;
   if (!query) {
-    setSelectedPatientProfile(null, { insurancePlan: ui.insurancePlan?.value || "" });
+    const draft = readPatientLookupDraft();
+    if (!draft.firstName && !draft.lastName && !draft.dob) {
+      setSelectedPatientProfile(null, { insurancePlan: ui.insurancePlan?.value || "" });
+    }
     return;
   }
   if (query.length < 2) return;
   lookupPatientCharts({ query, silent: true }).catch(() => {});
 });
 ui.patientRef?.addEventListener("change", () => {
-  loadPatientProfileByRef(ui.patientRef?.value || "", { silent: true }).catch(() => {});
+  const patientId = String(ui.patientRef?.value || "")
+    .trim()
+    .toUpperCase();
+  if (ui.patientRef) ui.patientRef.value = patientId;
+  if (ui.patientHeaderIdInput) ui.patientHeaderIdInput.value = patientId;
+  loadPatientProfileByRef(patientId, { silent: true, allowUnmatchedFallback: false }).catch(() => {});
 });
 ui.patientRef?.addEventListener("blur", () => {
-  loadPatientProfileByRef(ui.patientRef?.value || "", { silent: true }).catch(() => {});
+  const patientId = String(ui.patientRef?.value || "")
+    .trim()
+    .toUpperCase();
+  if (ui.patientRef) ui.patientRef.value = patientId;
+  if (ui.patientHeaderIdInput) ui.patientHeaderIdInput.value = patientId;
+  loadPatientProfileByRef(patientId, { silent: true, allowUnmatchedFallback: false }).catch(() => {});
 });
+ui.patientHeaderIdInput?.addEventListener("input", () => {
+  const patientId = String(ui.patientHeaderIdInput?.value || "")
+    .trim()
+    .toUpperCase();
+  if (ui.patientHeaderIdInput) ui.patientHeaderIdInput.value = patientId;
+  if (ui.patientRef) ui.patientRef.value = patientId;
+  if (!patientId) return;
+  if (patientId.length >= 2) {
+    lookupPatientCharts({ query: patientId, silent: true }).catch(() => {});
+  }
+});
+ui.patientHeaderIdInput?.addEventListener("change", () => {
+  const patientId = String(ui.patientHeaderIdInput?.value || "")
+    .trim()
+    .toUpperCase();
+  if (ui.patientHeaderIdInput) ui.patientHeaderIdInput.value = patientId;
+  if (ui.patientRef) ui.patientRef.value = patientId;
+  loadPatientProfileByRef(patientId, { silent: true, allowUnmatchedFallback: false }).catch(() => {});
+});
+const handleTopBarDemographicInput = () => {
+  const draft = readPatientLookupDraft();
+  if (!draft.patientId && !draft.firstName && !draft.lastName && !draft.dob) {
+    setSelectedPatientProfile(null, { insurancePlan: ui.insurancePlan?.value || "" });
+    return;
+  }
+  if (draft.firstName && draft.lastName && draft.dob) {
+    const query = `${draft.firstName} ${draft.lastName} ${draft.dob}`.trim();
+    lookupPatientCharts({ query, silent: true }).catch(() => {});
+  }
+};
+ui.patientHeaderFirstNameInput?.addEventListener("input", handleTopBarDemographicInput);
+ui.patientHeaderLastNameInput?.addEventListener("input", handleTopBarDemographicInput);
+ui.patientHeaderDobInput?.addEventListener("change", handleTopBarDemographicInput);
 ui.insurancePlan?.addEventListener("change", () => {
   if (state.selectedPatientProfile) {
     state.selectedPatientProfile = {
       ...state.selectedPatientProfile,
       insuranceInfo: toInsuranceLabel(ui.insurancePlan?.value || ""),
     };
+    renderPatientHeader({
+      patientProfile: state.selectedPatientProfile,
+      insurancePlan: ui.insurancePlan?.value || "",
+    });
+    return;
   }
-  renderPatientHeader({
-    patientProfile: state.selectedPatientProfile,
-    insurancePlan: ui.insurancePlan?.value || "",
-  });
+  setTextContent(ui.patientHeaderInsurance, toInsuranceLabel(ui.insurancePlan?.value || "") || "-");
 });
 ui.authPasswordBtn?.addEventListener("click", () => {
   handlePasswordAuth().catch((error) => setAuthError(error.message || "Login failed."));
